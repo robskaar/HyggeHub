@@ -15,6 +15,8 @@ const frostWord = (v: number) => (v === 0 ? 'Clear' : v < 12 ? 'Light' : v < 26 
  */
 export class HyggeAppearancePanel extends LitElement {
   @property({ type: Boolean }) narrow = false;
+  /** Shown inside a dashboard (the card) rather than as its own sidebar panel. */
+  @property({ type: Boolean, reflect: true }) embedded = false;
   @state() private tick = 0;
   @state() private saveError = '';
   private _hass?: HomeAssistant;
@@ -121,7 +123,7 @@ export class HyggeAppearancePanel extends LitElement {
     ];
 
     return html`
-      <div class="bar">
+      <div class="bar" ?hidden=${this.embedded}>
         ${this.narrow
           ? html`<button class="round" type="button" aria-label="Open the sidebar" @click=${() => this.dispatchEvent(new Event('hass-toggle-menu', { bubbles: true, composed: true }))}>
               ${icon('menu')}
@@ -212,6 +214,13 @@ export class HyggeAppearancePanel extends LitElement {
         min-height: 100vh;
         background: var(--hh-backdrop, var(--primary-background-color));
         background-attachment: fixed;
+      }
+      :host([embedded]) {
+        min-height: 0;
+        background: none;
+      }
+      :host([embedded]) .shell {
+        padding-top: 24px;
       }
       .bar {
         height: 56px;
@@ -588,3 +597,30 @@ export class HyggeAppearancePanel extends LitElement {
 }
 
 if (!customElements.get('hyggehub-appearance-panel')) customElements.define('hyggehub-appearance-panel', HyggeAppearancePanel);
+
+/**
+ * The same page as a dashboard card, for installs that can't edit configuration.yaml: make a dashboard
+ * called "Appearance", shown in the sidebar, with one panel view holding this card.
+ */
+export class HyggeAppearanceCard extends HyggeAppearancePanel {
+  constructor() {
+    super();
+    this.embedded = true;
+  }
+
+  setConfig(_config: unknown) {}
+
+  getCardSize() {
+    return 12;
+  }
+
+  getGridOptions() {
+    return { columns: 'full' };
+  }
+}
+
+if (!customElements.get('hyggehub-appearance-card')) customElements.define('hyggehub-appearance-card', HyggeAppearanceCard);
+window.customCards = window.customCards || [];
+if (!window.customCards.some(c => c.type === 'hyggehub-appearance-card')) {
+  window.customCards.push({ type: 'hyggehub-appearance-card', name: 'HyggeHub Appearance', description: 'Your own day and night look, as a card.', preview: false });
+}

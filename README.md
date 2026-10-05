@@ -51,9 +51,22 @@ Check the exact path under Settings → Dashboards → ⋮ → Resources; the pa
 Settings → Dashboards → ⋮ → Resources as a **JavaScript module** at `/local/hyggehub/hyggehub.js?v=0.1.0`.
 Bump the `?v=` each time you replace the file, or browsers keep the old copy.
 
-### 3. Add the Appearance panel to the sidebar
+### 3. Add the Appearance page to the sidebar
 
-In `configuration.yaml`, pointing `module_url` at the same file as the resource:
+**Without touching YAML (works on every install):** Settings → Dashboards → Add dashboard →
+*New dashboard from scratch*, call it **Appearance**, pick the icon `mdi:palette-swatch-outline`, and
+keep *Show in sidebar* on. Open it, ⋮ → Edit dashboard → ⋮ → Raw configuration editor, and paste:
+
+```yaml
+views:
+  - title: Appearance
+    type: panel
+    cards:
+      - type: custom:hyggehub-appearance-card
+```
+
+**Or as a real sidebar panel**, if you can edit `configuration.yaml` (for example with the File editor
+add-on), pointing `module_url` at the same file as the resource:
 
 ```yaml
 panel_custom:
@@ -64,7 +77,7 @@ panel_custom:
     module_url: /hacsfiles/HyggeHub/hyggehub.js # the path from Resources; /local/hyggehub/hyggehub.js if installed by hand
 ```
 
-Restart Home Assistant. Every user gets the panel and edits only their own settings.
+Restart Home Assistant. Either way, every user sees the same page but edits only their own settings.
 
 ### 4. Build a dashboard
 
