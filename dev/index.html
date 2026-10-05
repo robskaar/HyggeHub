@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HyggeHub dev</title>
+    <style>
+      /* Stand-in for Home Assistant's shell: the view background and a sidebar. */
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--lovelace-background, #dce3e5);
+        background-attachment: fixed;
+        color: var(--primary-text-color);
+        font-family: var(--hh-font, system-ui);
+      }
+      .rail {
+        position: fixed;
+        inset: 0 auto 0 0;
+        width: 76px;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        padding: 14px 0;
+        background: var(--sidebar-background-color);
+        border-right: 1px solid var(--divider-color);
+      }
+      .rail button {
+        width: 62px;
+        padding: 8px 0 6px;
+        border: 0;
+        border-radius: 14px;
+        background: none;
+        color: var(--sidebar-icon-color);
+        font: 600 10.5px var(--hh-font);
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+      }
+      .rail button[aria-current='page'] {
+        background: var(--hh-accent-soft);
+        color: var(--sidebar-selected-icon-color);
+      }
+      .rail .spacer {
+        flex: 1;
+      }
+      .rail .who {
+        font: 600 10px var(--hh-font);
+        color: var(--sidebar-text-color);
+        text-align: center;
+      }
+      .rail .who button {
+        width: auto;
+        padding: 4px 8px;
+        margin-top: 4px;
+        border: 1px solid var(--divider-color);
+      }
+      main {
+        padding-left: 76px;
+      }
+      .view {
+        max-width: 1360px;
+        margin: 0 auto;
+        padding: 0 24px 56px;
+      }
+      .board {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+        gap: 24px;
+        align-items: start;
+      }
+      .col {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        min-width: 0;
+      }
+      .col h2 {
+        margin: 0;
+        padding: 6px 6px 0;
+        font: 600 11.5px var(--hh-font);
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--secondary-text-color);
+      }
+      .people {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+        gap: 24px;
+        margin-bottom: 28px;
+      }
+      .pair {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 14px;
+      }
+      @media (max-width: 760px) {
+        .rail {
+          inset: auto 0 0 0;
+          width: auto;
+          flex-direction: row;
+          justify-content: space-around;
+          padding: 8px;
+        }
+        .rail .spacer {
+          display: none;
+        }
+        main {
+          padding-left: 0;
+          padding-bottom: 90px;
+        }
+        .view {
+          padding: 0 16px 40px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="rail">
+      <button type="button" data-view="dash" aria-current="page">Home</button>
+      <button type="button" data-view="panel">Appearance</button>
+      <div class="spacer"></div>
+      <div class="who">Signed in as<br /><button type="button" id="who">Alex</button></div>
+    </nav>
+    <main>
+      <div class="view" id="dash">
+        <div id="header"></div>
+        <div id="family" style="margin-bottom: 24px"></div>
+        <div class="people" id="people"></div>
+        <div class="board">
+          <div class="col" id="col-now"></div>
+          <div class="col" id="col-rooms"><h2>Rooms</h2></div>
+          <div class="col" id="col-security"><h2>Security</h2></div>
+          <div class="col" id="col-plans"><h2>Countdowns</h2><div id="plans-ring"></div><div class="pair" id="pair"></div><h2>Lists</h2><div id="plans-lists"></div></div>
+        </div>
+      </div>
+      <div id="panel" hidden></div>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

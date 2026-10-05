@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>HyggeHub portraits</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 32px;
+        display: flex;
+        gap: 32px;
+        flex-wrap: wrap;
+        background: var(--lovelace-background, #dce3e5);
+      }
+      .p {
+        width: 300px;
+        height: 300px;
+        border-radius: 50%;
+        overflow: hidden;
+        background: radial-gradient(circle at 35% 25%, var(--hh-glass-press), color-mix(in srgb, var(--hh-accent) 22%, var(--hh-glass-strong)) 70%);
+      }
+      .p svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <script type="module">
+      import { render } from 'lit';
+      import '../src/theme/engine';
+      import { renderAvatar } from '../src/shared/avatar';
+      const people = [
+        [{ preset: 'man', hair: 'brown', eyes: 'hazel' }, false],
+        [{ preset: 'woman', hair: 'brown', eyes: 'blue' }, false],
+        [{ preset: 'child', hair: 'brown', eyes: 'brown' }, false],
+        [{ preset: 'baby', hair: 'brown', eyes: 'blue' }, false],
+        [{ preset: 'baby', hair: 'brown', eyes: 'blue' }, true],
+      ];
+      people.forEach(([opts, asleep], i) => {
+        const el = document.createElement('div');
+        el.className = 'p';
+        document.body.appendChild(el);
+        render(renderAvatar(opts, `a${i}`, asleep), el);
+      });
+    </script>
+  </body>
+</html>

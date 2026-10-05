@@ -1,0 +1,21 @@
+{
+  "name": "hyggehub",
+  "version": "0.1.0",
+  "description": "HyggeHub: a Nordic glass design system for Home Assistant. Custom cards, per-user day/night themes and an Appearance panel.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "lit": "^3.3.3"
+  },
+  "devDependencies": {
+    "@mdi/js": "^7.4.47",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.3"
+  }
+}

@@ -1,0 +1,145 @@
+# A complete HyggeHub dashboard in the sections view.
+# Settings → Dashboards → Add dashboard → New dashboard from scratch, then ⋮ → Edit → Raw configuration editor,
+# and paste this in. Replace the entity ids with your own.
+title: Home
+views:
+  - title: Home
+    path: home
+    type: sections
+    max_columns: 4
+    header:
+      card:
+        type: custom:hyggehub-header-card
+        people: [person.alex, person.sam]
+        chips:
+          - entity: lock.front_door
+            icon: mdi:lock-outline
+          - entity: sensor.indoor_temperature
+            icon: mdi:thermometer
+    sections:
+      - type: grid
+        column_span: 4
+        cards:
+          - type: custom:hyggehub-family-card
+            people:
+              - entity: person.alex
+                avatar: { preset: man, hair: brown, eyes: hazel }
+                battery: sensor.alex_phone_battery_level
+                charging: binary_sensor.alex_phone_is_charging
+                calendar: calendar.alex
+              - entity: person.sam
+                avatar: { preset: woman, hair: brown, eyes: blue }
+                battery: sensor.sam_phone_battery_level
+                charging: binary_sensor.sam_phone_is_charging
+                calendar: calendar.sam
+              - entity: person.noah
+                avatar: { preset: child, hair: brown, eyes: brown }
+                calendar: calendar.noah
+                default_location: home
+              - name: Ella
+                avatar: { preset: baby, hair: brown, eyes: blue }
+                calendar: calendar.ella
+                default_location: home
+                sleep: input_boolean.ella_asleep
+
+      - type: grid
+        cards:
+          - type: custom:hyggehub-notification-stack-card
+          - type: custom:hyggehub-weather-card
+            entity: weather.home
+          - type: custom:hyggehub-energy-card
+            solar: sensor.solar_power
+            grid: sensor.grid_power
+            battery: sensor.battery_power
+            battery_soc: sensor.battery_level
+            extras:
+              - name: Solar today
+                entity: sensor.solar_energy_today
+              - name: Spot price
+                entity: sensor.spot_price
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Rooms
+          - type: custom:hyggehub-room-card
+            name: Living room
+            icon: mdi:sofa-outline
+            temperature: sensor.living_temperature
+            humidity: sensor.living_humidity
+            dimmer: light.living_floor_lamp
+            entities:
+              - light.living_floor_lamp
+              - light.living_pendant
+              - cover.living_blinds
+              - light.living_shelf
+          - type: custom:hyggehub-room-card
+            name: Bedroom
+            icon: mdi:bed-outline
+            temperature: sensor.bedroom_temperature
+            humidity: sensor.bedroom_humidity
+            entities: [light.bedroom_bedside, light.bedroom_ceiling, fan.bedroom, cover.bedroom_blinds]
+          - type: custom:hyggehub-media-card
+            entity: media_player.living_room_speaker
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Security
+          - type: custom:hyggehub-alarm-card
+            entity: alarm_control_panel.home
+            exit_delay: 30
+            entry_delay: 30
+            sensors:
+              - binary_sensor.front_door
+              - binary_sensor.terrace_door
+              - binary_sensor.kitchen_window
+          - type: custom:hyggehub-appliance-card
+            name: Washing machine
+            entity: sensor.washer_status
+            remaining_entity: sensor.washer_remaining
+            program_entity: sensor.washer_program
+            total_minutes: 95
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Countdowns
+          - type: custom:hyggehub-countdown-card
+            name: Lofoten
+            subtitle: Flight to Bodø
+            icon: mdi:image-filter-hdr
+            target: "2026-12-18T09:40"
+            start: "2026-08-20"
+          - type: custom:hyggehub-countdown-card
+            name: Sauna
+            style: compact
+            icon: mdi:fire
+            animation: flicker
+            entity: timer.sauna
+            value_entity: sensor.sauna_temperature
+            value_target: 80
+            done_text: Ready
+          - type: custom:hyggehub-countdown-card
+            name: Bins out
+            style: compact
+            icon: mdi:trash-can-outline
+            weekly: { day: tue, time: "07:00" }
+            chips:
+              - name: Paper
+              - name: Plastic
+                color: ok
+          - type: heading
+            heading: Lists
+          - type: custom:hyggehub-lists-card
+            lists:
+              - entity: todo.shopping_list
+                name: Groceries
+                done_label: Got it
+              - entity: todo.chores
+                name: To do
+                done_label: Done
+                placeholder: Add a task
+            note:
+              entity: input_text.quick_note
+              name: Note
