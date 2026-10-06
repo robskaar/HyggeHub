@@ -26,8 +26,7 @@ A Nordic glass design system for Home Assistant: ten custom cards, six complete 
 | `hyggehub-media-card` | Now playing, with artwork, a live equaliser and controls |
 | `hyggehub-appliance-card` | A washer or dryer with a spinning drum, time left and wash/rinse/spin phases |
 | `hyggehub-energy-card` | Power moving between solar, battery, grid and the home |
-| `hyggehub-person-card` | One family member: a drawn portrait, where they are and since when, phone battery, and any stats you add |
-| `hyggehub-family-card` | Everyone at once: portraits, location and battery in a row |
+| `hyggehub-family-card` | Everyone at once: portraits, where they are, what's next and battery. Tap a person for their details in the same spot |
 
 All cards follow Home Assistant's conventions: tap to act, hold (or right-click) for the entity's
 more-info dialog. They size themselves for the sections view.
@@ -188,39 +187,45 @@ It shows persistent notifications (the bell in the sidebar). Dismissing one here
 Home Assistant. Built-in rules pick an icon and colour for batteries, open doors, deliveries, finished
 laundry, updates and security alerts.
 
-### Person and family
+### Family
+
+Everyone in the home on one card. Each person is a two-sided tile: the front shows their portrait,
+where they are, what's next and their battery. **Tap a person** and, in the same space, the portrait
+gives way to the details: where they are and since when, what's on now and next, battery, the sleep
+toggle and any extra stats. Tap again (or leave it for 25 seconds) to turn back. Holding a tile opens
+Home Assistant's own details for that person.
+
+Options for each person:
 
 ```yaml
-type: custom:hyggehub-person-card
-entity: person.alex              # optional: leave it out for someone without a tracker
-name: Alex                       # defaults to the person's name
-style: full                        # full, or compact (a quarter-width tile)
-avatar:
-  preset: man                      # woman | man | child | baby
-  hair: brown                      # brown, dark-brown, light-brown, blonde, black, red, auburn, grey, or #hex
-  eyes: hazel                      # blue, brown, hazel (green-brown), green, grey, or #hex
-  skin: fair                       # light, fair, medium, tan, deep, or #hex
-  shirt: "#40607a"                 # optional
-# picture: /local/avatars/alex.png   # a real image instead of the drawn portrait
-battery: sensor.alex_phone_battery_level
-charging: binary_sensor.alex_phone_is_charging   # or a sensor whose state is "charging"
-battery_label: Phone                                # "Watch" for a GPS watch
-distance: sensor.home_alex_distance               # optional, shown while away (Proximity integration)
-calendar: calendar.alex                           # one or a list; see "Where everyone is" below
-calendar_match: Alex                              # optional, for a shared family calendar
-agenda: 2                                           # upcoming events listed on the full card
-default_location: home                              # optional, for someone with no tracker
-sleep: input_boolean.ella_asleep                  # optional: a tap-to-toggle sleep tile (see below)
-stats:
-  - entity: sensor.alex_steps
-    name: Steps today
-    icon: mdi:shoe-print               # timestamp sensors read as "in 2 h 10 min" / "12 min ago"
+- entity: person.alex                # optional: leave it out for someone without a tracker
+  name: Alex                         # defaults to the person's name
+  avatar:
+    preset: man                      # woman | man | child | baby
+    hair: brown                      # brown, dark-brown, light-brown, blonde, black, red, auburn, grey, or #hex
+    eyes: hazel                      # blue, brown, hazel (green-brown), green, grey, or #hex
+    skin: fair                       # light, fair, medium, tan, deep, or #hex
+    shirt: "#40607a"                 # optional
+  # picture: /local/avatars/alex.png # a real image instead of the drawn portrait
+  battery: sensor.alex_phone_battery_level
+  charging: sensor.alex_phone_battery_state   # a binary_sensor, or a sensor whose state is "charging"
+  battery_label: Phone               # "Watch" for a GPS watch
+  distance: sensor.home_alex_distance        # optional, shown while away (Proximity integration)
+  calendar: calendar.alex            # one or a list; see "Where everyone is" below
+  calendar_match: Alex               # optional, for a shared family calendar
+  agenda: 2                          # upcoming events on the details side
+  default_location: home             # optional, for someone with no tracker
+  sleep: input_boolean.ella_asleep   # optional: a tap-to-toggle sleep row (see below)
+  stats:
+    - entity: sensor.alex_steps
+      name: Steps today
+      icon: mdi:shoe-print           # timestamp sensors read as "in 2 h 10 min" / "12 min ago"
 ```
 
 ```yaml
 type: custom:hyggehub-family-card
 title: Family
-people:                            # the same options as the person card, one entry each
+people:
   - entity: person.alex
     avatar: { preset: man, hair: brown, eyes: hazel }
     battery: sensor.alex_phone_battery_level
@@ -263,8 +268,8 @@ and what's next.
    as *Playdate at Lily's · Lily's house*, marked with a small calendar icon, until it ends.
 3. **`default_location`**, when neither knows. `home` suits a toddler with no tracker.
 
-The full card also lists what's on now and the next events (`agenda`), and the small layouts show
-the next one, e.g. *Football · 16:30*.
+The front of each tile shows the next event, e.g. *Football · 16:30*; the details side lists what's
+on now and the next ones (`agenda`).
 
 **Setting it up with Google Calendar.** Add the Google Calendar integration (Settings → Devices &
 services → Add integration → Google Calendar) and sign in with the Google account that sees your
@@ -286,8 +291,8 @@ every five minutes.
 #### When Ella sleeps
 
 Make an `input_boolean.ella_asleep` helper (Settings → Devices & services → Helpers → Toggle) and
-set it as `sleep`. The full person card then shows a sleep tile you tap at bedtime and again when
-they wake. While it's on, the portrait closes its eyes and the card reads *Asleep · 47 min*.
+set it as `sleep`. Their details side then has a sleep row you tap at bedtime and again when they
+wake. While it's on, the portrait closes its eyes and the tile reads *Asleep*.
 
 ### Weather, media, appliance, energy, header
 
@@ -297,7 +302,12 @@ entity: weather.home
 slots: 6                     # forecast slots; hourly when the integration provides it
 
 type: custom:hyggehub-media-card
-entity: media_player.living_room
+entity: media_player.living_room    # one speaker, or several (speakers and groups):
+# entities:                         # follows whichever is playing; chips switch between them
+#   - media_player.kitchen
+#   - entity: media_player.whole_house
+#     name: Everywhere
+volume: true                        # the volume bar; false hides it
 
 type: custom:hyggehub-appliance-card
 name: Washing machine
@@ -313,7 +323,8 @@ power_threshold: 5
 
 type: custom:hyggehub-energy-card
 solar: sensor.solar_power           # W or kW
-grid: sensor.grid_power             # + import, − export
+grid: sensor.grid_power             # + import, − export; or import only, with:
+# grid_export: sensor.grid_export_power   # when export is its own sensor
 battery: sensor.battery_power       # + discharging, − charging
 battery_soc: sensor.battery_level
 extras: [{ name: Spot price, entity: sensor.spot_price }]

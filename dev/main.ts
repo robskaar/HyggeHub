@@ -91,12 +91,17 @@ const put = (e: HassEntity) => (states[e.entity_id] = e);
     media_duration: 268,
     media_position: 102,
     media_position_updated_at: iso(now),
+    volume_level: 0.42,
   }),
   ent('sensor.washer_status', 'spin', { friendly_name: 'Washer' }),
   ent('sensor.washer_remaining', '12', { unit_of_measurement: 'min' }),
   ent('sensor.washer_program', 'Cottons 40° · 1200 rpm'),
   ent('sensor.solar_power', '1820', { unit_of_measurement: 'W' }),
   ent('sensor.grid_power', '410', { unit_of_measurement: 'W' }),
+  ent('sensor.grid_export_power', '0', { unit_of_measurement: 'W' }),
+  ent('sensor.water_today', '214', { unit_of_measurement: 'L', friendly_name: 'Water today' }),
+  ent('media_player.kitchen_speaker', 'idle', { friendly_name: 'Kitchen speaker', volume_level: 0.35 }),
+  ent('media_player.everywhere', 'off', { friendly_name: 'Everywhere' }),
   ent('sensor.battery_power', '-300', { unit_of_measurement: 'W' }),
   ent('sensor.battery_level', '64', { unit_of_measurement: '%' }),
   ent('sensor.solar_energy_today', '6.4', { unit_of_measurement: 'kWh' }),
@@ -227,6 +232,7 @@ async function callService(domain: string, service: string, data: Record<string,
       const pos = s.state === 'playing' ? s.attributes.media_position + (Date.now() - new Date(s.attributes.media_position_updated_at).getTime()) / 1000 : s.attributes.media_position;
       set(id, s.state === 'playing' ? 'paused' : 'playing', { media_position: pos, media_position_updated_at: iso(Date.now()) });
     }
+    if (service === 'volume_set') set(id, s.state, { volume_level: data.volume_level });
     if (service === 'media_seek') set(id, s.state, { media_position: data.seek_position, media_position_updated_at: iso(Date.now()) });
     if (service === 'media_next_track' || service === 'media_previous_track') set(id, s.state, { media_position: 0, media_position_updated_at: iso(Date.now()) });
   } else if (service === 'set_value') ids.forEach(id => set(id, data.value));
@@ -368,12 +374,19 @@ const family = [
   },
 ];
 card('hyggehub-family-card', { people: family }, 'family');
-family.forEach(p => card('hyggehub-person-card', p, 'people'));
 card('hyggehub-notification-stack-card', {}, 'col-now');
 card('hyggehub-weather-card', { entity: 'weather.home' }, 'col-now');
 card(
   'hyggehub-energy-card',
-  { solar: 'sensor.solar_power', grid: 'sensor.grid_power', battery: 'sensor.battery_power', battery_soc: 'sensor.battery_level', extras: [{ name: 'Solar today', entity: 'sensor.solar_energy_today' }, { name: 'Spot price', entity: 'sensor.spot_price' }] },
+  {
+    solar: 'sensor.solar_power',
+    grid: 'sensor.grid_power',
+    grid_export: 'sensor.grid_export_power',
+    extras: [
+      { name: 'Solar today', entity: 'sensor.solar_energy_today' },
+      { name: 'Water today', entity: 'sensor.water_today' },
+    ],
+  },
   'col-now',
 );
 card(
@@ -404,7 +417,7 @@ card(
   },
   'col-rooms',
 );
-card('hyggehub-media-card', { entity: 'media_player.living_room_speaker' }, 'col-rooms');
+card('hyggehub-media-card', { entities: ['media_player.living_room_speaker', 'media_player.kitchen_speaker', { entity: 'media_player.everywhere', name: 'Everywhere' }] }, 'col-rooms');
 card(
   'hyggehub-alarm-card',
   {
@@ -470,4 +483,13 @@ if (location.hash === '#open-notes') {
 }
 
 // Dev-only: any hash containing "notes" hides the people sections so the notifications are on screen.
-if (location.hash.includes('notes')) ['family', 'people', 'header'].forEach(id => (document.getElementById(id)!.style.display = 'none'));
+if (location.hash.includes('notes')) ['family', 'header'].forEach(id => (document.getElementById(id)!.style.display = 'none'));
+
+// Dev-only: #open-family turns the first two family members to their details, for screenshots.
+if (location.hash === '#open-family') {
+  setTimeout(() => {
+    const members = document.querySelector('hyggehub-family-card')?.shadowRoot?.querySelectorAll<HTMLElement>('.member');
+    members?.[1]?.click();
+    members?.[2]?.click();
+  }, 1500);
+}

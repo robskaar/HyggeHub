@@ -2,8 +2,8 @@ import type { HomeAssistant } from '../types';
 
 /*
  * Upcoming events from Home Assistant calendar entities (Google Calendar, Local Calendar, CalDAV...).
- * Fetched through the `calendar.get_events` action, and cached per set of calendars so the family card
- * and every person card showing the same calendars make one request between them.
+ * Fetched through the `calendar.get_events` action, and cached per set of calendars so several cards
+ * reading the same calendars make one request between them.
  */
 
 export interface CalEvent {

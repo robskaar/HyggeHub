@@ -11,7 +11,7 @@ import './cards/weather-card';
 import './cards/media-card';
 import './cards/appliance-card';
 import './cards/energy-card';
-import './cards/person-card';
+import './cards/family-card';
 import './panel/appearance-panel';
 
 export const VERSION = '0.1.0';

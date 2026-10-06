@@ -8,8 +8,12 @@ export interface EnergyCardConfig extends CardConfig {
   title?: string;
   /** Solar production power. */
   solar?: string;
-  /** Grid power: positive while importing, negative while exporting. */
+  /**
+   * Grid power: positive while importing, negative while exporting. If your meter reports import and
+   * export as two sensors, put the import one here and the export one in `grid_export`.
+   */
   grid: string;
+  grid_export?: string;
   /** Battery power: positive while discharging, negative while charging. */
   battery?: string;
   battery_soc?: string;
@@ -35,7 +39,7 @@ export class HyggeEnergyCard extends HyggeCard<EnergyCardConfig> {
 
   protected override watchedEntities() {
     const c = this.config;
-    return [c.solar, c.grid, c.battery, c.battery_soc, c.home, ...(c.extras ?? []).map(e => e.entity)];
+    return [c.solar, c.grid, c.grid_export, c.battery, c.battery_soc, c.home, ...(c.extras ?? []).map(e => e.entity)];
   }
 
   override getCardSize() {
@@ -45,7 +49,7 @@ export class HyggeEnergyCard extends HyggeCard<EnergyCardConfig> {
   protected override render() {
     const c = this.config;
     const solar = powerKw(this.stateOf(c.solar)) ?? 0;
-    const grid = powerKw(this.stateOf(c.grid)) ?? 0;
+    const grid = (powerKw(this.stateOf(c.grid)) ?? 0) - (powerKw(this.stateOf(c.grid_export)) ?? 0);
     const battery = powerKw(this.stateOf(c.battery)) ?? 0;
     const home = powerKw(this.stateOf(c.home)) ?? Math.max(0, solar + grid + battery);
     const selfShare = home > 0 ? Math.round(Math.max(0, Math.min(1, 1 - Math.max(grid, 0) / home)) * 100) : 100;
