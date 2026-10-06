@@ -12,6 +12,7 @@ import './cards/media-card';
 import './cards/appliance-card';
 import './cards/energy-card';
 import './cards/family-card';
+import './cards/bins-card';
 import './panel/appearance-panel';
 
 export const VERSION = '0.1.0';

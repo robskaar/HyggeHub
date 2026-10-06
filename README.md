@@ -20,7 +20,8 @@ A Nordic glass design system for Home Assistant: ten custom cards, six complete 
 | `hyggehub-notification-stack-card` | Home Assistant's notifications as a pile: tap to fan out, drag sideways to dismiss |
 | `hyggehub-room-card` | A room: the main button toggles all its lights, plus fans, blinds, climate and a dimmer |
 | `hyggehub-alarm-card` | The alarm's state in one circle; tapping it walks through mode → code → exit delay |
-| `hyggehub-countdown-card` | A date, a weekly event (bin day), a timer, an `input_datetime` or a calendar entry |
+| `hyggehub-countdown-card` | A date, a weekly event, a timer, an `input_datetime` or a calendar entry |
+| `hyggehub-bins-card` | The next bin collection and which bins go out, then the next few, from a collection calendar or a schedule |
 | `hyggehub-lists-card` | To-do lists you swipe between, with a completed group and a shared note |
 | `hyggehub-weather-card` | Current weather with falling snow or rain, a forecast row and today's daylight |
 | `hyggehub-media-card` | Now playing, with artwork, a live equaliser and controls |
@@ -171,6 +172,36 @@ highlighted instead of duplicated. Swipe a row right to tick it off or restore i
 
 The note tab saves to the entity you give it. `input_text` is limited to 255 characters (set `max: 255`
 on the helper; the default is 100), and the card shows a counter.
+
+### Bins
+
+```yaml
+type: custom:hyggehub-bins-card
+calendar: calendar.affald           # a calendar with one event per collection
+upcoming: 3                         # later collections listed under the next one
+bins:                               # optional: your own names, keywords and colours
+  - name: Restaffald
+    match: rest
+    color: "#6b777d"
+```
+
+The best source is a collection calendar. In Denmark, the **Affaldshåndtering DK** integration
+(HACS custom repository `https://github.com/briis/affalddk`, type *Integration*) covers most
+municipalities and creates one, and **Waste Collection Schedule** does the same in many countries.
+Each event's text decides which bins it shows: "Mad- og restaffald" becomes Restaffald and Madaffald.
+Built-in keywords cover the usual Danish and English names (rest, mad, papir, pap, plast/MDK, glas,
+metal, farligt, tekstil, storskrald, have); anything else is shown as written.
+
+Without a calendar, write the rounds by hand. `first` is any date that bin was collected:
+
+```yaml
+type: custom:hyggehub-bins-card
+schedule:
+  - { name: Restaffald, day: tue, every_weeks: 2, first: "2026-10-06" }
+  - { name: Papir, day: wed, every_weeks: 4, first: "2026-10-14" }
+```
+
+The evening before a collection the card says *Put them out tonight* and its bins give a little hop.
 
 ### Notification stack
 

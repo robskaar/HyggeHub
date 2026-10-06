@@ -24,21 +24,20 @@ interface Raw {
 }
 
 const TTL = 5 * 60_000;
-const AHEAD_DAYS = 7;
 const cache = new Map<string, { at: number; events: Promise<CalEvent[]> }>();
 
 const parse = (v: string): { d: Date; allDay: boolean } =>
   v.length === 10 ? { d: new Date(`${v}T00:00:00`), allDay: true } : { d: new Date(v), allDay: false };
 
-/** Events from now-ish through the next week, oldest first. Errors resolve to an empty list. */
-export function fetchEvents(hass: HomeAssistant, calendars: string[], force = false): Promise<CalEvent[]> {
-  const key = [...calendars].sort().join(',');
+/** Events from the start of today through `aheadDays`, oldest first. Errors resolve to an empty list. */
+export function fetchEvents(hass: HomeAssistant, calendars: string[], force = false, aheadDays = 7): Promise<CalEvent[]> {
+  const key = `${[...calendars].sort().join(',')}|${aheadDays}`;
   const hit = cache.get(key);
   // A forced refresh within half a minute of the last one reuses it: several cards see the same change.
   if (hit && Date.now() - hit.at < (force ? 30_000 : TTL)) return hit.events;
   const start = new Date();
   start.setHours(0, 0, 0, 0);
-  const end = new Date(start.getTime() + AHEAD_DAYS * 864e5);
+  const end = new Date(start.getTime() + aheadDays * 864e5);
   const events = hass
     .callWS<{ response: Record<string, { events: Raw[] }> }>({
       type: 'call_service',
