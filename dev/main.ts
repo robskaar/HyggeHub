@@ -460,3 +460,14 @@ setInterval(() => {
     publish();
   }
 }, 60_000);
+
+// Dev-only: #open-notes fans the notification stack out after load, for screenshots of the open state.
+if (location.hash === '#open-notes') {
+  setTimeout(() => {
+    const card = document.querySelector('hyggehub-notification-stack-card');
+    (card?.shadowRoot?.querySelector('.head .btn-text') as HTMLButtonElement | null)?.click();
+  }, 1500);
+}
+
+// Dev-only: any hash containing "notes" hides the people sections so the notifications are on screen.
+if (location.hash.includes('notes')) ['family', 'people', 'header'].forEach(id => (document.getElementById(id)!.style.display = 'none'));

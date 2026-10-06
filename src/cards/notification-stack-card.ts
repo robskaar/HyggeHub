@@ -6,6 +6,7 @@ import { haIcon, icon } from '../shared/icons';
 import { relativeAge } from '../shared/format';
 import { base, glass } from '../shared/styles';
 import type { CardConfig, Unsubscribe } from '../types';
+import { engine } from '../theme/engine';
 
 type Severity = 'info' | 'ok' | 'warn' | 'crit';
 
@@ -41,8 +42,6 @@ const DEFAULT_RULES: Rule[] = [
   { match: 'done|finished|complete|ready', icon: 'mdi:check-circle-outline', severity: 'ok' },
 ];
 const SEVERITY_VAR: Record<Severity, string> = { info: 'var(--hh-accent)', ok: 'var(--hh-ok)', warn: 'var(--hh-warn)', crit: 'var(--hh-crit)' };
-const PEEK = 11;
-const GAP = 10;
 
 const plain = (md: string) =>
   md
@@ -72,7 +71,6 @@ export class HyggeNotificationStackCard extends HyggeCard<NotificationStackConfi
     super.connectedCallback();
     if (this.hasUpdated) this.subscribe();
     this.ageTimer = window.setInterval(() => this.requestUpdate(), 60_000);
-    window.addEventListener('resize', this.layout);
   }
 
   override disconnectedCallback() {
@@ -80,8 +78,6 @@ export class HyggeNotificationStackCard extends HyggeCard<NotificationStackConfi
     this.unsub?.then(u => u()).catch(() => {});
     this.unsub = undefined;
     clearInterval(this.ageTimer);
-    window.removeEventListener('resize', this.layout);
-    this.resizeObs.disconnect();
   }
 
   private subscribe() {
@@ -101,15 +97,9 @@ export class HyggeNotificationStackCard extends HyggeCard<NotificationStackConfi
       });
   }
 
-  // Note heights change after the first paint (web fonts arriving, the card resizing), so the stack is
-  // re-measured whenever any note changes size rather than only after a render.
-  private resizeObs = new ResizeObserver(() => this.layout());
-
   protected override updated(changed: PropertyValues) {
     super.updated(changed);
     if (changed.has('hass')) this.subscribe();
-    this.stackEl?.querySelectorAll('.note').forEach(el => this.resizeObs.observe(el));
-    this.layout();
   }
 
   private get list(): Notification[] {
@@ -130,52 +120,59 @@ export class HyggeNotificationStackCard extends HyggeCard<NotificationStackConfi
     return { icon: 'mdi:bell-outline', color: SEVERITY_VAR.info };
   }
 
-  /** Positions every card: a fanned stack when collapsed, a list when open. */
-  private layout = () => {
-    const stack = this.stackEl;
-    if (!stack) return;
-    const els = [...stack.querySelectorAll<HTMLElement>('.note')].filter(el => !this.leaving.has(el.dataset.id!));
-    if (!els.length) {
-      stack.style.height = '0px';
-      return;
+  /*
+   * Layout is pure CSS: collapsed, every note shares one grid cell (the cell is as tall as the top note,
+   * plus room for the peeking edges); open, they're an ordinary column. The card therefore always
+   * reports its true height, however Home Assistant resizes or re-parents it.
+   *
+   * Movement between the two is animated FLIP-style: measure each note, make the change, then play each
+   * note from where it was to where it landed.
+   */
+  private async flip(change: () => void) {
+    const els = [...(this.stackEl?.querySelectorAll<HTMLElement>('.note:not(.leaving)') ?? [])];
+    const first = new Map(els.map(el => [el, el.getBoundingClientRect()]));
+    change();
+    await this.updateComplete;
+    if (!engine.motionOn) return;
+    for (const el of els) {
+      if (!el.isConnected || el.classList.contains('leaving')) continue;
+      const a = first.get(el)!;
+      const b = el.getBoundingClientRect();
+      if (!b.width || !a.width) continue;
+      const dx = a.left + a.width / 2 - (b.left + b.width / 2);
+      const dy = a.bottom - b.bottom;
+      const s = a.width / b.width;
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(s - 1) < 0.005) continue;
+      const end = getComputedStyle(el).transform;
+      el.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${s})${end === 'none' ? '' : ` ${end}`}` }, { transform: end }], {
+        duration: 480,
+        easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
+      });
     }
-    const h0 = els[0].offsetHeight;
-    let y = 0;
-    els.forEach((el, i) => {
-      const h = el.offsetHeight;
-      el.style.zIndex = String(els.length - i);
-      if (this.open) {
-        el.style.transform = `translateY(${y}px) scale(1)`;
-        el.style.opacity = '1';
-        el.dataset.depth = '0';
-        y += h + GAP;
-      } else {
-        const d = Math.min(i, 3);
-        el.style.transform = `translateY(${h0 - h + d * PEEK}px) scale(${1 - d * 0.05})`;
-        el.style.opacity = i < 3 ? '1' : '0';
-        el.dataset.depth = String(d);
-      }
-    });
-    stack.style.height = `${this.open ? y - GAP : h0 + Math.min(els.length - 1, 2) * PEEK}px`;
-  };
+  }
 
   private toggle() {
-    this.open = !this.open;
-    setTimeout(this.layout, 420);
+    void this.flip(() => (this.open = !this.open));
   }
 
   private dismiss(id: string, el?: HTMLElement, dir = 1) {
-    this.leaving.add(id);
+    if (this.leaving.has(id)) return;
     if (el) {
       el.style.translate = `${dir * 115}% 0`;
       el.style.opacity = '0';
     }
-    this.layout();
+    void this.flip(() => {
+      this.leaving.add(id);
+      this.requestUpdate();
+    });
     setTimeout(() => {
       this.callService('persistent_notification', 'dismiss', { notification_id: id }).catch(() => {
         this.leaving.delete(id);
-        if (el) el.style.translate = '';
-        this.layout();
+        if (el) {
+          el.style.translate = '';
+          el.style.opacity = '';
+        }
+        this.requestUpdate();
       });
     }, 320);
   }
@@ -185,9 +182,9 @@ export class HyggeNotificationStackCard extends HyggeCard<NotificationStackConfi
     els.forEach((el, i) => setTimeout(() => this.dismiss(el.dataset.id!, el), i * 80));
   }
 
-  private onDown(e: PointerEvent, n: Notification, index: number) {
+  private onDown(e: PointerEvent, n: Notification, depth: number) {
     if ((e.target as HTMLElement).closest('button')) return;
-    if (!this.open && index !== 0) return;
+    if (!this.open && depth !== 0) return;
     const el = e.currentTarget as HTMLElement;
     const sx = e.clientX;
     let dx = 0;
@@ -211,8 +208,8 @@ export class HyggeNotificationStackCard extends HyggeCard<NotificationStackConfi
       el.classList.remove('dragging');
       if (drag && Math.abs(dx) > 90) return this.dismiss(n.notification_id, el, Math.sign(dx));
       el.style.translate = '';
+      el.style.opacity = '';
       if (!drag) this.toggle();
-      else this.layout();
     };
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
@@ -225,6 +222,7 @@ export class HyggeNotificationStackCard extends HyggeCard<NotificationStackConfi
     const list = this.list;
     const live = list.filter(n => !this.leaving.has(n.notification_id));
     if (!live.length && this.config.hide_when_empty) return html``;
+    let depthOf = 0;
 
     return html`
       <div class="head">
@@ -236,20 +234,23 @@ export class HyggeNotificationStackCard extends HyggeCard<NotificationStackConfi
             </div>`
           : nothing}
       </div>
-      <div class="stack ${this.open ? 'open' : ''}" aria-live="polite">
+      <div class="stack ${this.open ? 'open' : ''}" style="--peeks:${Math.min(Math.max(live.length - 1, 0), 2)}" aria-live="polite">
         ${repeat(
           list,
           n => n.notification_id,
-          (n, i) => {
+          n => {
             const s = this.lookFor(n);
+            const leaving = this.leaving.has(n.notification_id);
+            const depth = leaving ? 0 : Math.min(depthOf++, 3);
             return html`<div
-              class="note glass"
+              class="note glass ${leaving ? 'leaving' : ''}"
               data-id=${n.notification_id}
-              tabindex="0"
+              data-depth=${depth}
+              tabindex=${depth === 0 || this.open ? 0 : -1}
               role="button"
               aria-expanded=${this.open}
-              style="--sev:${s.color}"
-              @pointerdown=${(e: PointerEvent) => this.onDown(e, n, i)}
+              style="--sev:${s.color};z-index:${10 - depth}"
+              @pointerdown=${(e: PointerEvent) => this.onDown(e, n, depth)}
               @keydown=${(e: KeyboardEvent) => {
                 if (e.target !== e.currentTarget) return;
                 if (e.key === 'Enter' || e.key === ' ') {
@@ -302,13 +303,41 @@ export class HyggeNotificationStackCard extends HyggeCard<NotificationStackConfi
       }
       .stack {
         position: relative;
-        transition: height 0.5s var(--ease);
+        display: grid;
+        gap: 10px;
       }
-      .note {
+      /* Collapsed: one shared cell. Notes behind the top one drop their content so they stretch to
+         exactly its height, then peek out below it. */
+      .stack:not(.open) {
+        gap: 0;
+        padding-bottom: calc(var(--peeks, 0) * 11px);
+      }
+      .stack:not(.open) .note {
+        grid-area: 1 / 1;
+      }
+      .stack:not(.open) .note:not([data-depth='0']) > * {
+        display: none;
+      }
+      .stack:not(.open) .note[data-depth='1'] {
+        transform: translateY(11px) scale(0.95);
+      }
+      .stack:not(.open) .note[data-depth='2'] {
+        transform: translateY(22px) scale(0.9);
+      }
+      .stack:not(.open) .note[data-depth='3'] {
+        transform: translateY(22px) scale(0.9);
+        opacity: 0;
+        pointer-events: none;
+      }
+      .note.leaving {
         position: absolute;
         left: 0;
         right: 0;
         top: 0;
+        pointer-events: none;
+      }
+      .note {
+        position: relative;
         display: flex;
         gap: 12px;
         align-items: flex-start;
@@ -318,7 +347,7 @@ export class HyggeNotificationStackCard extends HyggeCard<NotificationStackConfi
         user-select: none;
         touch-action: pan-y;
         transform-origin: 50% 100%;
-        transition: transform 0.5s var(--ease), opacity 0.4s var(--ease), translate 0.35s var(--ease);
+        transition: opacity 0.4s var(--ease), translate 0.35s var(--ease);
       }
       .note.dragging {
         transition: none;
@@ -338,10 +367,6 @@ export class HyggeNotificationStackCard extends HyggeCard<NotificationStackConfi
         flex: 1;
         min-width: 0;
         transition: opacity 0.3s;
-      }
-      .note:not([data-depth='0']) .body,
-      .note:not([data-depth='0']) .ic {
-        opacity: 0;
       }
       .t {
         display: flex;

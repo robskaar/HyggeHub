@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>HyggeHub at phone width</title>
+    <style>
+      body {
+        margin: 0;
+        background: #222;
+      }
+      iframe {
+        width: 390px;
+        height: 1300px;
+        border: 0;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Desktop browsers won't shrink a window to phone width; a 390px frame gives a true phone layout. -->
+    <iframe id="f"></iframe>
+    <script>
+      document.getElementById("f").src = "index.html" + (location.hash || "#notes");
+    </script>
+  </body>
+</html>
