@@ -87,6 +87,14 @@ export const glass = css`
     position: relative;
     overflow: hidden;
     min-width: 0;
+    animation: hh-rise 0.55s var(--ease) both;
+  }
+  /* Cards settle into place when a dashboard opens: once, and only transform and opacity. */
+  @keyframes hh-rise {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
   }
   .card-h {
     display: flex;

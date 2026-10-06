@@ -66,6 +66,7 @@ export class HyggeWeatherCard extends HyggeCard<WeatherCardConfig> {
   private raf?: number;
   private particles: Particle[] = [];
   private particleColor = '';
+  private lastFrame = 0;
   private resizeObs?: ResizeObserver;
 
   static getStubConfig(hass: any) {
@@ -86,13 +87,13 @@ export class HyggeWeatherCard extends HyggeCard<WeatherCardConfig> {
 
   private onTheme = () => {
     this.particleColor = getComputedStyle(document.documentElement).getPropertyValue('--hh-particle').trim();
+    this.syncLoop();
   };
 
   override connectedCallback() {
     super.connectedCallback();
     engine.addEventListener('change', this.onTheme);
     this.onTheme();
-    if (this.hasUpdated) this.startLoop();
   }
 
   override disconnectedCallback() {
@@ -104,15 +105,17 @@ export class HyggeWeatherCard extends HyggeCard<WeatherCardConfig> {
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = undefined;
     this.resizeObs?.disconnect();
+    this.resizeObs = undefined;
   }
 
   protected override firstUpdated() {
-    this.startLoop();
+    this.syncLoop();
   }
 
   protected override updated(changed: PropertyValues) {
     super.updated(changed);
     if (this.hass && this.subscribedFor !== this.config.entity) this.subscribe();
+    if (changed.has('hass')) this.syncLoop();
   }
 
   private subscribe() {
@@ -132,16 +135,40 @@ export class HyggeWeatherCard extends HyggeCard<WeatherCardConfig> {
 
   // ---------- falling snow / rain on a canvas behind the content ----------
 
-  private startLoop() {
+  private get precipitating(): boolean {
+    const cond = this.stateOf(this.config.entity)?.state ?? '';
+    return SNOW.has(cond) || RAIN.has(cond);
+  }
+
+  /**
+   * The particle loop runs only while it's snowing or raining and motion is on, at about 30 frames a
+   * second. Otherwise the canvas is drawn once (still flakes, or nothing) and left alone.
+   */
+  private syncLoop() {
     const cv = this.canvas;
-    if (!cv || this.raf) return;
-    this.resizeObs = new ResizeObserver(() => this.sizeCanvas());
-    this.resizeObs.observe(cv);
-    const frame = () => {
-      this.draw();
+    if (!cv) return;
+    if (!this.resizeObs) {
+      this.resizeObs = new ResizeObserver(() => {
+        this.sizeCanvas();
+        this.draw();
+      });
+      this.resizeObs.observe(cv);
+    }
+    const run = this.precipitating && engine.motionOn;
+    if (run && !this.raf) {
+      const frame = (t: number) => {
+        if (this.onScreen && t - this.lastFrame > 32) {
+          this.lastFrame = t;
+          this.draw();
+        }
+        this.raf = requestAnimationFrame(frame);
+      };
       this.raf = requestAnimationFrame(frame);
-    };
-    this.raf = requestAnimationFrame(frame);
+    } else if (!run) {
+      if (this.raf) cancelAnimationFrame(this.raf);
+      this.raf = undefined;
+      this.draw();
+    }
   }
 
   private sizeCanvas() {
@@ -178,12 +205,12 @@ export class HyggeWeatherCard extends HyggeCard<WeatherCardConfig> {
     for (const p of this.particles) {
       if (move) {
         if (snow) {
-          p.y += p.s;
-          p.d += 0.012;
-          p.x += Math.sin(p.d) * 0.25;
+          p.y += p.s * 2;
+          p.d += 0.024;
+          p.x += Math.sin(p.d) * 0.5;
         } else {
-          p.y += 6 + p.s * 6;
-          p.x -= 1;
+          p.y += 12 + p.s * 12;
+          p.x -= 2;
         }
       }
       if (p.y > h + 10) Object.assign(p, this.spawn(w, h, false));

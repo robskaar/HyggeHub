@@ -6,6 +6,7 @@ import { renderAvatar, type AvatarOptions } from '../shared/avatar';
 import { haIcon } from '../shared/icons';
 import { formatState, formatTime, friendlyName, lang, numeric, relativeTime } from '../shared/format';
 import { base, glass } from '../shared/styles';
+import { engine } from '../theme/engine';
 import type { CardConfig, HomeAssistant } from '../types';
 
 export interface PersonConfig {
@@ -150,41 +151,43 @@ const batteryIcon = (level: number, charging: boolean) => svg`<svg class="bat" v
 
 /** The portrait in its ring. The front of a member tile. */
 function portrait(p: PersonConfig, st: Status, id: string, delay: number) {
-  return html`<span class="portrait" data-presence=${st.presence} data-arrived=${st.justArrived} style="--blink-delay:${delay}s">
-    ${p.picture ? html`<img src=${p.picture} alt="" />` : renderAvatar(p.avatar, id, st.asleep)}
+  return html`<span class="pwrap" data-presence=${st.presence} data-arrived=${st.justArrived} style="--breathe-delay:${delay}s">
+    <span class="portrait">${p.picture ? html`<img src=${p.picture} alt="" />` : renderAvatar(p.avatar, id, st.asleep)}</span>
+    ${st.asleep ? html`<span class="zz" aria-hidden="true"><i>z</i><i>z</i><i>z</i></span>` : nothing}
   </span>`;
 }
 
+/*
+ * Animation rule for everything below: only transform and opacity, and only on whole elements (the
+ * drawing, a ring, a floating letter). Those run on the graphics chip without repainting anything.
+ * Animating inside the SVG drawing, or a shadow, repaints every frame; on phones that added up to the
+ * app's page being killed and reloaded. Blinks are a brief class change driven by the card (blinkSomeone).
+ */
 const sharedStyles = css`
+  .pwrap {
+    position: relative;
+    display: block;
+    --ring: var(--hh-line);
+  }
+  .pwrap[data-presence='home'] {
+    --ring: var(--hh-ok);
+  }
+  .pwrap[data-presence='zone'] {
+    --ring: var(--hh-accent);
+  }
+  .pwrap[data-presence='away'] {
+    --ring: var(--hh-ink-3);
+  }
   .portrait {
     position: relative;
     display: block;
+    width: 100%;
+    height: 100%;
     border-radius: 50%;
     overflow: hidden;
     background: radial-gradient(circle at 35% 25%, var(--hh-glass-press), color-mix(in srgb, var(--hh-accent) 22%, var(--hh-glass-strong)) 70%);
     box-shadow: 0 0 0 3px var(--ring), 0 0 0 7px color-mix(in srgb, var(--ring) 18%, transparent), 0 14px 30px -14px rgba(0, 0, 0, 0.45);
     transition: box-shadow 0.5s;
-    --ring: var(--hh-line);
-  }
-  .portrait[data-presence='home'] {
-    --ring: var(--hh-ok);
-  }
-  .portrait[data-presence='zone'] {
-    --ring: var(--hh-accent);
-  }
-  .portrait[data-presence='away'] {
-    --ring: var(--hh-ink-3);
-  }
-  .portrait[data-arrived='true'] {
-    animation: arrived 2.2s ease-out infinite;
-  }
-  @keyframes arrived {
-    0% {
-      box-shadow: 0 0 0 3px var(--ring), 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
-    }
-    100% {
-      box-shadow: 0 0 0 3px var(--ring), 0 0 0 16px transparent;
-    }
   }
   .portrait img,
   .portrait .avatar {
@@ -193,56 +196,84 @@ const sharedStyles = css`
     display: block;
     object-fit: cover;
   }
-  .figure {
-    transform-box: fill-box;
+  /* Breathing: the whole drawing rises a hair and settles. */
+  .portrait .avatar {
     transform-origin: 50% 100%;
-    animation: breathe 4.8s ease-in-out infinite;
+    animation: breathe 5.2s ease-in-out infinite;
+    animation-delay: var(--breathe-delay, 0s);
+    will-change: transform;
   }
   @keyframes breathe {
     50% {
-      transform: translateY(1.5px) scale(1.008);
+      transform: translateY(1.2px) scale(1.012);
     }
   }
   .eye {
     transform-box: fill-box;
     transform-origin: center;
-    animation: blink 6.5s infinite;
-    animation-delay: var(--blink-delay, 0s);
+    transition: transform 0.07s ease-in;
   }
-  @keyframes blink {
-    0%,
-    93%,
+  .portrait.blinking .eye {
+    transform: scaleY(0.08);
+  }
+  /* Just home: a ring ripples out from the portrait for the first ten minutes. */
+  .pwrap[data-arrived='true']::after {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    border: 2px solid var(--ring);
+    animation: ripple 2.4s ease-out infinite;
+    pointer-events: none;
+    will-change: transform, opacity;
+  }
+  @keyframes ripple {
+    0% {
+      transform: scale(1);
+      opacity: 0.7;
+    }
     100% {
-      transform: scaleY(1);
-    }
-    95% {
-      transform: scaleY(0.08);
+      transform: scale(1.28);
+      opacity: 0;
     }
   }
-  .zz text {
-    font: 700 15px var(--hh-font);
-    fill: var(--hh-ink-2);
-    transform-box: fill-box;
-    animation: zz 3.2s ease-in-out infinite;
+  /* Asleep: three z's float up from the top corner, one after another. */
+  .zz {
+    position: absolute;
+    right: -4px;
+    top: -2px;
+    width: 24px;
+    height: 30px;
+    pointer-events: none;
+  }
+  .zz i {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    font: 700 13px var(--hh-font);
+    font-style: normal;
+    color: var(--hh-ink-2);
     opacity: 0;
+    animation: zz 3.6s ease-in-out infinite;
+    will-change: transform, opacity;
   }
-  .zz text:nth-child(2) {
-    animation-delay: 0.8s;
+  .zz i:nth-child(2) {
+    animation-delay: 1.2s;
   }
-  .zz text:nth-child(3) {
-    animation-delay: 1.6s;
+  .zz i:nth-child(3) {
+    animation-delay: 2.4s;
   }
   @keyframes zz {
     0% {
       opacity: 0;
-      transform: translate(0, 6px) scale(0.7);
+      transform: translate(0, 0) scale(0.7);
     }
-    30% {
-      opacity: 1;
+    25% {
+      opacity: 0.85;
     }
     100% {
       opacity: 0;
-      transform: translate(6px, -10px) scale(1.1);
+      transform: translate(12px, -22px) scale(1.15);
     }
   }
   .where {
@@ -304,6 +335,7 @@ export class HyggeFamilyCard extends HyggeCard<FamilyCardConfig> {
   private avatarId = `hh-fam${++seq}`;
   private loadedFor?: string;
   private ticker?: number;
+  private blinker?: number;
   private closeTimers = new Map<number, number>();
 
   static getStubConfig(hass: any) {
@@ -326,11 +358,13 @@ export class HyggeFamilyCard extends HyggeCard<FamilyCardConfig> {
     super.connectedCallback();
     // Once a minute: what's "now" moves on even when no entity changes. The fetch itself is cached.
     this.ticker = window.setInterval(() => void this.loadEvents(false), 60_000);
+    this.blinker = window.setInterval(() => this.blinkSomeone(), 3_500);
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     clearInterval(this.ticker);
+    clearInterval(this.blinker);
     this.closeTimers.forEach(t => clearTimeout(t));
     this.closeTimers.clear();
   }
@@ -357,6 +391,16 @@ export class HyggeFamilyCard extends HyggeCard<FamilyCardConfig> {
     this.events = await Promise.all(
       this.config.people.map(p => (calendars(p).length ? fetchEvents(hass, calendars(p), force).then(ev => forPerson(ev, p.calendar_match)) : Promise.resolve(undefined))),
     );
+  }
+
+  /** Now and then one awake person blinks: a 150 ms class change rather than a never-ending animation. */
+  private blinkSomeone() {
+    if (!engine.motionOn || document.hidden) return;
+    const awake = [...this.renderRoot.querySelectorAll<HTMLElement>('.member:not(.open) .portrait')].filter(p => p.querySelector('.eye'));
+    const p = awake[Math.floor(Math.random() * awake.length)];
+    if (!p) return;
+    p.classList.add('blinking');
+    setTimeout(() => p.classList.remove('blinking'), 150);
   }
 
   private toggle(i: number) {
@@ -557,7 +601,7 @@ export class HyggeFamilyCard extends HyggeCard<FamilyCardConfig> {
         pointer-events: auto;
         transition-delay: 0.08s;
       }
-      .face .portrait {
+      .face .pwrap {
         width: 80px;
         height: 80px;
         margin-bottom: 6px;

@@ -215,13 +215,14 @@ export class HyggeMediaCard extends HyggeCard<MediaCardConfig> {
         gap: 3px;
         align-items: flex-end;
         height: 22px;
-        filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
       }
       .eq b {
         width: 4px;
         border-radius: 2px;
         background: rgba(255, 255, 255, 0.92);
-        height: 30%;
+        height: 100%;
+        transform-origin: 50% 100%;
+        transform: scaleY(0.3);
         animation: eq 1s ease-in-out infinite;
       }
       .eq b:nth-child(2) {
@@ -236,10 +237,10 @@ export class HyggeMediaCard extends HyggeCard<MediaCardConfig> {
       @keyframes eq {
         0%,
         100% {
-          height: 25%;
+          transform: scaleY(0.25);
         }
         50% {
-          height: 100%;
+          transform: scaleY(1);
         }
       }
       .meta {

@@ -101,7 +101,7 @@ export class HyggeListsCard extends HyggeCard<ListsCardConfig> {
   }
 
   protected override firstUpdated() {
-    this.resizeObs = new ResizeObserver(() => this.fitTrack());
+    this.resizeObs = new ResizeObserver(() => this.scheduleFit());
     this.panes?.forEach(p => this.resizeObs!.observe(p));
   }
 
@@ -123,9 +123,24 @@ export class HyggeListsCard extends HyggeCard<ListsCardConfig> {
     }
   }
 
+  private fitQueued = false;
+
+  /** Resize observers must not resize inside their own callback, so the fit waits for the next frame. */
+  private scheduleFit() {
+    if (this.fitQueued) return;
+    this.fitQueued = true;
+    requestAnimationFrame(() => {
+      this.fitQueued = false;
+      this.fitTrack();
+    });
+  }
+
   private fitTrack() {
     const pane = this.panes?.[this.paneIdx];
-    if (this.track && pane?.offsetHeight) this.track.style.height = `${pane.offsetHeight}px`;
+    const h = pane?.offsetHeight;
+    if (!this.track || !h) return;
+    const next = `${h}px`;
+    if (this.track.style.height !== next) this.track.style.height = next;
   }
 
   // ---------- item actions (optimistic, then confirmed by the subscription) ----------

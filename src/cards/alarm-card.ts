@@ -485,6 +485,18 @@ export class HyggeAlarmCard extends HyggeCard<AlarmCardConfig> {
         background: color-mix(in srgb, var(--state) 12%, var(--hh-glass-strong));
         border: 1px solid var(--hh-stroke);
         transition: color 0.4s, background 0.4s;
+        position: relative;
+      }
+      /* The armed pulse is a ring that only scales and fades: the graphics chip does that for free,
+         where an animated shadow would be repainted every frame. */
+      .core::after {
+        content: '';
+        position: absolute;
+        inset: -1px;
+        border-radius: 50%;
+        border: 2px solid var(--state);
+        opacity: 0;
+        pointer-events: none;
       }
       .core svg.i {
         width: 36px;
@@ -515,26 +527,34 @@ export class HyggeAlarmCard extends HyggeCard<AlarmCardConfig> {
           opacity: 0;
         }
       }
-      .orb[data-visual='disarmed'] .core {
-        animation: breathe 4s ease-in-out infinite;
+      .orb[data-visual='disarmed'] .core::after {
+        animation: breathe-ring 4.5s ease-in-out infinite;
       }
-      .orb[data-visual='armed'] .core {
+      @keyframes breathe-ring {
+        0%,
+        100% {
+          transform: scale(1);
+          opacity: 0;
+        }
+        50% {
+          transform: scale(1.07);
+          opacity: 0.35;
+        }
+      }
+      .orb[data-visual='armed'] .core::after {
         animation: pulse 2.4s ease-out infinite;
       }
-      .orb[data-visual='triggered'] .core {
+      .orb[data-visual='triggered'] .core::after {
         animation: pulse 0.9s ease-out infinite;
-      }
-      @keyframes breathe {
-        50% {
-          box-shadow: 0 0 0 8px color-mix(in srgb, var(--state) 10%, transparent);
-        }
       }
       @keyframes pulse {
         0% {
-          box-shadow: 0 0 0 0 color-mix(in srgb, var(--state) 45%, transparent);
+          transform: scale(1);
+          opacity: 0.55;
         }
         100% {
-          box-shadow: 0 0 0 22px transparent;
+          transform: scale(1.3);
+          opacity: 0;
         }
       }
       .hint {

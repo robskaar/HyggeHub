@@ -22,7 +22,7 @@ export interface Look {
   theme: ThemeKey;
   /** Backdrop blur behind glass, in px (0-40). */
   frost: number;
-  /** Whether the backdrop colours drift slowly. */
+  /** Whether the backdrop's colours drift slowly (stepped once a second, never animated per frame). */
   drift: boolean;
 }
 
@@ -94,23 +94,16 @@ const minutesOf = (hhmm: string) => {
   return h * 60 + m;
 };
 
-const GLOBAL_CSS = `
-@property --hh-d1 { syntax: '<percentage>'; inherits: true; initial-value: 0%; }
-@property --hh-d2 { syntax: '<percentage>'; inherits: true; initial-value: 0%; }
-@property --hh-d3 { syntax: '<percentage>'; inherits: true; initial-value: 0%; }
-@property --hh-d4 { syntax: '<percentage>'; inherits: true; initial-value: 0%; }
-@keyframes hh-drift {
-  from { --hh-d1: 0%; --hh-d2: 0%; --hh-d3: 0%; --hh-d4: 0%; }
-  to { --hh-d1: 9%; --hh-d2: -8%; --hh-d3: 7%; --hh-d4: -10%; }
-}
-html.hh-drift { animation: hh-drift 42s ease-in-out infinite alternate; }
-@media (prefers-reduced-motion: reduce) { html.hh-drift { animation: none; } }
-`;
-
-/** Four soft colour fields over the base colour. The --hh-d* offsets are animated by `hh-drift`. */
+/*
+ * Four soft colour fields over the base colour. Their positions are offset by --hh-d1..4, which the
+ * engine nudges once a second (see `drift`). An earlier version animated those offsets with a CSS
+ * animation; that restyled the entire page every frame, and on iPhones the Home Assistant app's web view
+ * was killed and reloaded every half-minute or so. A one-second step on fields this soft and this large
+ * moves a few pixels and is not visible as a step, at a sixtieth of the cost.
+ */
 function backdrop(p: Palette): string {
   const field = (size: string, x: string, y: string, dx: number, dy: number, c: string) =>
-    `radial-gradient(${size} at calc(${x} + var(--hh-d${dx})) calc(${y} + var(--hh-d${dy})), ${c} 0%, transparent 70%)`;
+    `radial-gradient(${size} at calc(${x} + var(--hh-d${dx}, 0%)) calc(${y} + var(--hh-d${dy}, 0%)), ${c} 0%, transparent 70%)`;
   return [
     field('60vmax 60vmax', '6%', '-4%', 1, 2, p.blob1),
     field('52vmax 52vmax', '96%', '16%', 2, 3, p.blob2),
@@ -119,6 +112,10 @@ function backdrop(p: Palette): string {
     p.bg,
   ].join(', ');
 }
+
+/** One full sway of the backdrop takes this long; it is stepped once a second, never per frame. */
+const DRIFT_PERIOD_S = 120;
+const DRIFT_STEP_MS = 1000;
 
 export class ThemeEngine extends EventTarget {
   appearance: Appearance = clone(DEFAULT_APPEARANCE);
@@ -146,7 +143,25 @@ export class ThemeEngine extends EventTarget {
     this.reducedMQ.addEventListener('change', () => this.apply(true));
     // Sun and fixed-times rules change with the clock, not with any event.
     setInterval(() => this.apply(), 60_000);
+    setInterval(() => this.drift(), DRIFT_STEP_MS);
     this.apply(true);
+  }
+
+  private drifting = false;
+
+  /** Nudges the backdrop's colour fields one small step along a slow sway, when the user wants it. */
+  private drift() {
+    const root = document.documentElement;
+    const on = !!this.resolved?.look.drift && this.motionOn && !document.hidden;
+    if (!on) {
+      if (this.drifting) for (const n of [1, 2, 3, 4]) root.style.setProperty(`--hh-d${n}`, '0%');
+      this.drifting = false;
+      return;
+    }
+    this.drifting = true;
+    const t = ((Date.now() / 1000) % DRIFT_PERIOD_S) / DRIFT_PERIOD_S * 2 * Math.PI;
+    const offsets = [9 * Math.sin(t), -8 * Math.sin(t + 1.3), 7 * Math.sin(t + 2.6), -10 * Math.sin(t + 4)];
+    offsets.forEach((v, i) => root.style.setProperty(`--hh-d${i + 1}`, `${v.toFixed(2)}%`));
   }
 
   get motionOn(): boolean {
@@ -322,10 +337,12 @@ export class ThemeEngine extends EventTarget {
       '--sidebar-selected-icon-color': p.accent,
       '--sidebar-selected-text-color': p.accent,
     };
+    // Only write what differs: every write to <html>'s style makes the browser restyle the whole page.
     const root = document.documentElement;
-    for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v);
-    root.style.colorScheme = p.dark ? 'dark' : 'light';
-    root.classList.toggle('hh-drift', r.look.drift && motion);
+    for (const [k, v] of Object.entries(vars)) if (root.style.getPropertyValue(k) !== v) root.style.setProperty(k, v);
+    const scheme = p.dark ? 'dark' : 'light';
+    if (root.style.colorScheme !== scheme) root.style.colorScheme = scheme;
+    root.classList.remove('hh-drift');
     if (changedLook) this.emit();
   }
 
@@ -334,12 +351,6 @@ export class ThemeEngine extends EventTarget {
   }
 
   private injectGlobals() {
-    if (!document.getElementById('hyggehub-global')) {
-      const style = document.createElement('style');
-      style.id = 'hyggehub-global';
-      style.textContent = GLOBAL_CSS;
-      document.head.appendChild(style);
-    }
     if (!document.getElementById('hyggehub-font')) {
       const link = document.createElement('link');
       link.id = 'hyggehub-font';

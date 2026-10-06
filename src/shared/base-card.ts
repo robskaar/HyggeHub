@@ -15,6 +15,32 @@ export abstract class HyggeCard<C extends CardConfig = CardConfig> extends LitEl
   private holdTimer?: number;
   private held = false;
 
+  /** False while the card is scrolled out of view; its CSS animations are paused then. */
+  protected onScreen = true;
+  private static seen?: IntersectionObserver;
+
+  /** One observer for every card: off-screen cards pause their animations (via --hh-play). */
+  private static observer(): IntersectionObserver {
+    return (HyggeCard.seen ??= new IntersectionObserver(entries => {
+      for (const e of entries) {
+        const card = e.target as HyggeCard;
+        card.onScreen = e.isIntersecting;
+        if (e.isIntersecting) card.style.removeProperty('--hh-play');
+        else card.style.setProperty('--hh-play', 'paused');
+      }
+    }));
+  }
+
+  override connectedCallback() {
+    super.connectedCallback();
+    HyggeCard.observer().observe(this);
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    HyggeCard.observer().unobserve(this);
+  }
+
   @property({ attribute: false, noAccessor: true })
   set hass(hass: HomeAssistant | undefined) {
     const old = this._hass;

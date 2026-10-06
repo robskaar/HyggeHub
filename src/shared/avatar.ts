@@ -257,6 +257,5 @@ export function renderAvatar(opts: AvatarOptions = {}, id: string, asleep = fals
       <path d=${s.sheen} fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".2"></path>
       ${preset === 'woman' ? svg`<circle cx="60" cy="112" r="2.4" fill="#e8c77a"></circle><circle cx="140" cy="112" r="2.4" fill="#e8c77a"></circle>` : nothing}
     </g>
-    ${asleep ? svg`<g class="zz"><text x="138" y="60">z</text><text x="148" y="48">z</text><text x="158" y="38">z</text></g>` : nothing}
   </svg>`;
 }

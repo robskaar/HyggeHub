@@ -374,8 +374,24 @@ user. It caches a copy per device so a reload paints the right look before the w
 
 The resolved palette is written as CSS custom properties on `<html>`: the `--hh-*` tokens the cards
 use, plus the Home Assistant variables listed in `apply()`. The backdrop is
-`--lovelace-background`, built from four soft colour fields. "Moving background" animates their
-positions through registered `@property` values, so it needs no extra DOM and works on any view.
+`--lovelace-background`, built from four soft colour fields. "Moving background" sways them by
+stepping their offsets once a second rather than animating them: an earlier version animated those
+values on `<html>`, which restyled the whole page every frame and made the iPhone app reload its page
+every half-minute or so. Only values that changed are written, for the same reason.
+
+### Animation rules
+
+The cards follow the rules that keep animated dashboards smooth on phones:
+
+- **Only `transform` and `opacity`, on whole elements.** The graphics chip moves and fades those
+  without repainting. Animating shadows, filters, heights, or anything inside an SVG drawing repaints
+  every frame. Pulses are rings that scale and fade; the portraits breathe as a whole; the equaliser
+  scales its bars.
+- **Never animate page-wide values.** Anything set on `<html>` restyles every element on the page.
+- **Pause what isn't seen.** Every card watches whether it's on screen and pauses its animations when
+  it isn't; the weather's snow and rain only run while it's actually snowing or raining.
+- **Occasional beats constant.** A blink is a 150 ms class change every few seconds, not an animation
+  that runs forever.
 
 ## Developing
 
