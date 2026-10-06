@@ -3,6 +3,7 @@ import { state } from 'lit/decorators.js';
 import { registerCard, HyggeCard } from '../shared/base-card';
 import { fetchEvents, type CalEvent } from '../shared/calendar';
 import { lang } from '../shared/format';
+import { haIcon } from '../shared/icons';
 import { base, glass } from '../shared/styles';
 import type { CardConfig, HomeAssistant } from '../types';
 
@@ -11,6 +12,8 @@ interface BinType {
   /** Case-insensitive text or regular expression found in the collection event, e.g. "rest|mad". */
   match?: string;
   color?: string;
+  /** Any mdi icon, e.g. mdi:bottle-wine-outline. */
+  icon?: string;
 }
 
 interface ScheduleEntry {
@@ -36,23 +39,31 @@ export interface BinsCardConfig extends CardConfig {
   upcoming?: number;
 }
 
+/** One kind of waste found in a collection: its name, colour and icon. */
+interface Kind {
+  name: string;
+  color: string;
+  icon: string;
+}
+
+/** One physical bin on a collection day, and the kinds of waste it takes. */
 interface Pickup {
   day: Date;
-  bins: Array<{ name: string; color: string }>;
+  bins: Array<{ name: string; color: string; kinds: Kind[] }>;
 }
 
 const DEFAULT_BINS: Required<BinType>[] = [
-  { name: 'Restaffald', match: 'rest|residual|general', color: '#6b777d' },
-  { name: 'Madaffald', match: 'mad|food|bio|organ', color: '#5f8f47' },
-  { name: 'Papir', match: 'papir|paper', color: '#3e72a8' },
-  { name: 'Pap', match: '\\bpap\\b|karton|cardboard', color: '#9a7552' },
-  { name: 'Plast', match: 'plast|mdk|kartoner|plastic', color: '#8a5fb0' },
-  { name: 'Glas', match: 'glas|glass', color: '#3b8d7c' },
-  { name: 'Metal', match: 'metal|dåse|can', color: '#7f8a93' },
-  { name: 'Farligt affald', match: 'farlig|hazard', color: '#b4423f' },
-  { name: 'Tekstil', match: 'tekstil|textile', color: '#c0793a' },
-  { name: 'Storskrald', match: 'storskrald|bulky', color: '#5a5a5a' },
-  { name: 'Haveaffald', match: 'have|garden|green', color: '#6f9a3b' },
+  { name: 'Restaffald', match: 'rest|residual|general', color: '#6b777d', icon: 'mdi:trash-can-outline' },
+  { name: 'Madaffald', match: 'mad|food|bio|organ', color: '#5f8f47', icon: 'mdi:food-apple-outline' },
+  { name: 'Papir', match: 'papir|paper', color: '#3e72a8', icon: 'mdi:newspaper-variant-outline' },
+  { name: 'Pap', match: '\\bpap\\b|karton|cardboard', color: '#9a7552', icon: 'mdi:package-variant-closed' },
+  { name: 'Plast', match: 'plast|mdk|kartoner|plastic', color: '#8a5fb0', icon: 'mdi:bottle-soda-classic-outline' },
+  { name: 'Glas', match: 'glas|glass', color: '#3b8d7c', icon: 'mdi:bottle-wine-outline' },
+  { name: 'Metal', match: 'metal|dåse|can', color: '#7f8a93', icon: 'mdi:magnet' },
+  { name: 'Farligt affald', match: 'farlig|hazard', color: '#b4423f', icon: 'mdi:skull-crossbones-outline' },
+  { name: 'Tekstil', match: 'tekstil|textile', color: '#c0793a', icon: 'mdi:tshirt-crew-outline' },
+  { name: 'Storskrald', match: 'storskrald|bulky', color: '#5a5a5a', icon: 'mdi:sofa-outline' },
+  { name: 'Haveaffald', match: 'have|garden|green', color: '#6f9a3b', icon: 'mdi:leaf' },
 ];
 const FALLBACK = ['#4c7f95', '#a0784a', '#7d6aa8', '#5b8f6e'];
 const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -133,15 +144,21 @@ export class HyggeBinsCard extends HyggeCard<BinsCardConfig> {
     this.events = await fetchEvents(this.hass, this.calendars, force, AHEAD_DAYS);
   }
 
-  /** Which bins an event is about. Unrecognised text becomes its own bin, so nothing is lost. */
-  private binsIn(text: string, fallbackIndex: number) {
+  /** The kinds of waste a text names. Unrecognised text becomes its own kind, so nothing is lost. */
+  private kindsIn(text: string, fallbackIndex: number): Kind[] {
     const types = [...(this.config.bins ?? []), ...DEFAULT_BINS];
-    const found: Array<{ name: string; color: string }> = [];
+    const found: Kind[] = [];
     for (const t of types) {
       if (found.some(f => f.name === t.name)) continue;
-      if (test(t.match ?? t.name, text)) found.push({ name: t.name, color: t.color ?? FALLBACK[found.length % FALLBACK.length] });
+      const builtIn = DEFAULT_BINS.find(d => d.name === t.name);
+      if (test(t.match ?? t.name, text))
+        found.push({
+          name: t.name,
+          color: t.color ?? builtIn?.color ?? FALLBACK[found.length % FALLBACK.length],
+          icon: t.icon ?? builtIn?.icon ?? 'mdi:trash-can-outline',
+        });
     }
-    return found.length ? found : [{ name: text.trim() || 'Collection', color: FALLBACK[fallbackIndex % FALLBACK.length] }];
+    return found.length ? found : [{ name: text.trim() || 'Collection', color: FALLBACK[fallbackIndex % FALLBACK.length], icon: 'mdi:trash-can-outline' }];
   }
 
   private pickups(): Pickup[] | undefined {
@@ -156,7 +173,8 @@ export class HyggeBinsCard extends HyggeCard<BinsCardConfig> {
       if (!this.events) return undefined;
       this.events.forEach((e, i) => {
         if (daysFromToday(e.start) < 0) return;
-        add(e.start, this.binsIn(`${e.summary} ${e.description ?? ''}`, i));
+        const kinds = this.kindsIn(`${e.summary} ${e.description ?? ''}`, i);
+        add(e.start, [{ name: e.summary || kinds[0].name, color: kinds[0].color, kinds }]);
       });
     }
     const today = dayOnly(new Date());
@@ -169,8 +187,8 @@ export class HyggeBinsCard extends HyggeCard<BinsCardConfig> {
       while (d.getDay() !== weekday) d = new Date(d.getTime() + 864e5);
       if (d < today) d = new Date(d.getTime() + Math.ceil((today.getTime() - d.getTime()) / step) * step);
       for (; d <= until; d = new Date(d.getTime() + step)) {
-        const known = this.binsIn(s.name, i)[0];
-        add(d, [{ name: s.name, color: s.color ?? known.color }]);
+        const kinds = this.kindsIn(s.name, i);
+        add(d, [{ name: s.name, color: s.color ?? kinds[0].color, kinds }]);
       }
     });
     return [...byDay.values()].sort((a, b) => a.day.getTime() - b.day.getTime());
@@ -209,13 +227,25 @@ export class HyggeBinsCard extends HyggeCard<BinsCardConfig> {
                   <small class="num">${this.whenLabel(next.day).small}</small>
                 </div>
               </div>
-              <div class="chips">${next.bins.map(b => html`<span class="chip" style="--c:${b.color}">${b.name}</span>`)}</div>
+              <div class="kinds">
+                ${next.bins.map(
+                  b => html`<span class="bin-kinds" role="img" aria-label=${b.name} title=${b.name}>
+                    ${b.kinds.map(k => html`<span class="kind" style="--c:${k.color}" title=${k.name}>${haIcon(k.icon)}</span>`)}
+                  </span>`,
+                )}
+              </div>
               ${later.length
                 ? html`<ul class="later">
                     ${later.map(
                       p => html`<li>
                         <span class="d num">${this.whenLabel(p.day).big === 'Tomorrow' ? 'Tomorrow' : p.day.toLocaleDateString(lang(this.hass), { weekday: 'short', day: 'numeric', month: 'short' })}</span>
-                        <span class="dots">${p.bins.map(b => html`<span class="dot-chip" style="--c:${b.color}"><i></i>${b.name}</span>`)}</span>
+                        <span class="dots">
+                          ${p.bins.map(
+                            b => html`<span class="bin-kinds small" role="img" aria-label=${b.name} title=${b.name}>
+                              ${b.kinds.map(k => html`<span class="kind" style="--c:${k.color}">${haIcon(k.icon)}</span>`)}
+                            </span>`,
+                          )}
+                        </span>
                       </li>`,
                     )}
                   </ul>`
@@ -326,11 +356,41 @@ export class HyggeBinsCard extends HyggeCard<BinsCardConfig> {
         font-size: 12px;
         color: var(--hh-ink-3);
       }
-      .chips {
+      .kinds {
         display: flex;
         flex-wrap: wrap;
-        gap: 6px;
-        margin-top: 12px;
+        gap: 10px;
+        margin-top: 14px;
+      }
+      /* One rounded group per physical bin, holding an icon for each kind of waste it takes. */
+      .bin-kinds {
+        display: inline-flex;
+        gap: 4px;
+        padding: 4px;
+        border-radius: 14px;
+        background: var(--hh-glass-strong);
+        border: 1px solid var(--hh-stroke);
+      }
+      .kind {
+        width: 34px;
+        height: 34px;
+        border-radius: 10px;
+        display: grid;
+        place-items: center;
+        background: var(--c);
+        color: #fff;
+        --mdc-icon-size: 19px;
+      }
+      .bin-kinds.small {
+        padding: 2px;
+        border-radius: 9px;
+        gap: 2px;
+      }
+      .bin-kinds.small .kind {
+        width: 22px;
+        height: 22px;
+        border-radius: 7px;
+        --mdc-icon-size: 13px;
       }
       .chip {
         font-size: 12px;

@@ -6,19 +6,22 @@ import { base, glass } from '../shared/styles';
 import type { CardConfig } from '../types';
 
 export interface HeaderCardConfig extends CardConfig {
-  /** person.* entities; the first chip says who is home. */
+  /** person.* entities for a "who's home" chip. */
   people?: string[];
   /** Status chips: any entity, shown with its formatted state. */
   chips?: Array<{ entity: string; icon?: string; name?: string }>;
-  /** Greet the signed-in user by first name. Default true. */
-  greet_by_name?: boolean;
+  /** Off by default: phones show the time and you know your own name and the day. */
+  clock?: boolean;
+  greeting?: boolean;
+  date?: boolean;
 }
 
+/** A slim row of status chips for the top of a dashboard; optionally a clock, greeting and date. */
 export class HyggeHeaderCard extends HyggeCard<HeaderCardConfig> {
   private ticker?: number;
 
-  static getStubConfig(hass: any) {
-    return { people: Object.keys(hass?.states ?? {}).filter(id => id.startsWith('person.')) };
+  static getStubConfig() {
+    return { chips: [] };
   }
 
   protected override watchedEntities() {
@@ -26,12 +29,12 @@ export class HyggeHeaderCard extends HyggeCard<HeaderCardConfig> {
   }
 
   override getCardSize() {
-    return 2;
+    return this.config.clock ? 2 : 1;
   }
 
   override connectedCallback() {
     super.connectedCallback();
-    this.ticker = window.setInterval(() => this.requestUpdate(), 10_000);
+    if (this.config?.clock || this.config?.greeting) this.ticker = window.setInterval(() => this.requestUpdate(), 10_000);
   }
 
   override disconnectedCallback() {
@@ -40,11 +43,10 @@ export class HyggeHeaderCard extends HyggeCard<HeaderCardConfig> {
   }
 
   private peopleChip() {
-    const ids = this.config.people ?? [];
-    if (!ids.length) return nothing;
-    const people = ids.map(id => this.stateOf(id)).filter(Boolean);
-    const home = people.filter(p => p!.state === 'home');
-    const text = home.length === people.length ? 'Everyone home' : home.length === 0 ? 'Nobody home' : `${home.length} of ${people.length} home`;
+    const people = (this.config.people ?? []).map(id => this.stateOf(id)).filter(Boolean);
+    if (!people.length) return nothing;
+    const home = people.filter(p => p!.state === 'home').length;
+    const text = home === people.length ? 'All home' : home === 0 ? 'No one home' : `${home} of ${people.length} home`;
     return html`<span class="pill">
       <span class="avatars">
         ${people.map(p => {
@@ -58,23 +60,39 @@ export class HyggeHeaderCard extends HyggeCard<HeaderCardConfig> {
   }
 
   protected override render() {
+    const c = this.config;
     const now = new Date();
     const h = now.getHours();
     const greeting = h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
-    const first = this.config.greet_by_name === false ? '' : this.hass?.user?.name?.split(' ')[0];
+    const first = this.hass?.user?.name?.split(' ')[0];
+    const chips = c.chips ?? [];
+    const hasText = c.clock || c.greeting || c.date;
+    if (!hasText && !chips.length && !c.people?.length) {
+      this.style.display = 'none';
+      return nothing;
+    }
+    this.style.display = '';
     return html`
       <div class="hero">
-        <div>
-          <div class="time num">${pad(h)}:${pad(now.getMinutes())}</div>
-          <p class="greet"><b>${greeting}${first ? `, ${first}` : ''}</b> · ${now.toLocaleDateString(lang(this.hass), { weekday: 'long', day: 'numeric', month: 'long' })}</p>
-        </div>
+        ${hasText
+          ? html`<div>
+              ${c.clock ? html`<div class="time num">${pad(h)}:${pad(now.getMinutes())}</div>` : nothing}
+              ${c.greeting || c.date
+                ? html`<p class="greet">
+                    ${c.greeting ? html`<b>${greeting}${first ? `, ${first}` : ''}</b>` : nothing}${c.greeting && c.date ? ' · ' : ''}${c.date
+                      ? now.toLocaleDateString(lang(this.hass), { weekday: 'long', day: 'numeric', month: 'long' })
+                      : nothing}
+                  </p>`
+                : nothing}
+            </div>`
+          : nothing}
         <div class="chips">
           ${this.peopleChip()}
-          ${(this.config.chips ?? []).map(c => {
-            const s = this.stateOf(c.entity);
-            return html`<button class="pill" type="button" @click=${() => this.moreInfo(c.entity)}>
-              ${haIcon(c.icon ?? (s?.attributes.icon as string | undefined) ?? 'mdi:information-outline')}
-              ${c.name ? html`<span class="faint">${c.name}</span>` : nothing}${this.format(c.entity)}
+          ${chips.map(ch => {
+            const s = this.stateOf(ch.entity);
+            return html`<button class="pill" type="button" @click=${() => this.moreInfo(ch.entity)}>
+              ${haIcon(ch.icon ?? (s?.attributes.icon as string | undefined) ?? 'mdi:information-outline')}
+              ${ch.name ? html`<span class="faint">${ch.name}</span>` : nothing}${this.format(ch.entity)}
             </button>`;
           })}
         </div>
@@ -90,9 +108,9 @@ export class HyggeHeaderCard extends HyggeCard<HeaderCardConfig> {
         display: flex;
         align-items: flex-end;
         justify-content: space-between;
-        gap: 20px;
+        gap: 12px 20px;
         flex-wrap: wrap;
-        padding: 18px 4px 8px;
+        padding: 8px 4px 4px;
       }
       .time {
         font-weight: 200;
@@ -113,8 +131,7 @@ export class HyggeHeaderCard extends HyggeCard<HeaderCardConfig> {
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
-        max-width: 560px;
-        justify-content: flex-end;
+        margin-left: auto;
         --mdc-icon-size: 16px;
       }
       .chips .pill {
@@ -153,11 +170,11 @@ export class HyggeHeaderCard extends HyggeCard<HeaderCardConfig> {
       }
       @media (max-width: 560px) {
         .chips {
-          justify-content: flex-start;
+          margin-left: 0;
         }
       }
     `,
   ];
 }
 
-registerCard('hyggehub-header-card', HyggeHeaderCard, 'HyggeHub Header', 'The time, a greeting and status chips for the top of a dashboard.');
+registerCard('hyggehub-header-card', HyggeHeaderCard, 'HyggeHub Header', 'A slim row of status chips; a clock, greeting and date if you want them.');

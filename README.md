@@ -3,7 +3,7 @@
 A Nordic glass design system for Home Assistant: ten custom cards, six complete themes, and an
 **Appearance** panel where each person in the home picks their own day and night look.
 
-- **Per-user looks.** Each Home Assistant user chooses a theme, frost level and moving background for
+- **Per-user looks.** Each Home Assistant user chooses a theme and frost level for
   day, and either another look for night or "Same as day". The choice is stored with the user, so it
   follows them to every device and never changes what anyone else sees.
 - **When night starts** is per user too: follow the device's light/dark setting, follow the sun, or
@@ -16,18 +16,19 @@ A Nordic glass design system for Home Assistant: ten custom cards, six complete 
 
 | Card | What it shows |
 | --- | --- |
-| `hyggehub-header-card` | The time, a greeting by first name, who's home, and status chips |
-| `hyggehub-notification-stack-card` | Home Assistant's notifications as a pile: tap to fan out, drag sideways to dismiss |
+| `hyggehub-header-card` | A slim row of status chips; a clock, greeting and date only if you switch them on |
+| `hyggehub-notification-stack-card` | Home Assistant's notifications as a pile: tap to fan out, drag sideways to dismiss. Gone when there are none |
 | `hyggehub-room-card` | A room: the main button toggles all its lights, plus fans, blinds, climate and a dimmer |
 | `hyggehub-alarm-card` | The alarm's state in one circle; tapping it walks through mode → code → exit delay |
 | `hyggehub-countdown-card` | A date, a weekly event, a timer, an `input_datetime` or a calendar entry |
-| `hyggehub-bins-card` | The next bin collection and which bins go out, then the next few, from a collection calendar or a schedule |
+| `hyggehub-bins-card` | The next bin collection with an icon for each kind of waste, then the next few, from a collection calendar or a schedule |
 | `hyggehub-lists-card` | To-do lists you swipe between, with a completed group and a shared note |
-| `hyggehub-weather-card` | Current weather with falling snow or rain, a forecast row and today's daylight |
+| `hyggehub-weather-card` | The place and current weather with falling snow or rain, an hours/days forecast you page through, and today's daylight |
 | `hyggehub-media-card` | Now playing, with artwork, a live equaliser and controls |
 | `hyggehub-appliance-card` | A washer or dryer with a spinning drum, time left and wash/rinse/spin phases |
-| `hyggehub-energy-card` | Power moving between solar, battery, grid and the home |
-| `hyggehub-family-card` | Everyone at once: portraits, where they are, what's next and battery. Tap a person for their details in the same spot |
+| `hyggehub-energy-card` | Live power moving between solar, battery, grid and the home (needs live W/kW sensors) |
+| `hyggehub-usage-card` | Electricity in and out, water and gas for today, this week or this month, from meters such as Målerportal |
+| `hyggehub-family-card` | Everyone at once, plus the car as a chip. Tap a person or the car and the card becomes their page, with a breadcrumb back |
 
 All cards follow Home Assistant's conventions: tap to act, hold (or right-click) for the entity's
 more-info dialog. They size themselves for the sections view.
@@ -207,7 +208,7 @@ The evening before a collection the card says *Put them out tonight* and its bin
 
 ```yaml
 type: custom:hyggehub-notification-stack-card
-hide_when_empty: false
+hide_when_empty: true        # default: no notifications, no card; false shows "All caught up"
 rules:                       # optional, checked before the built-in ones
   - match: "sauna"
     icon: mdi:fire
@@ -220,11 +221,38 @@ laundry, updates and security alerts.
 
 ### Family
 
-Everyone in the home on one card. Each person is a two-sided tile: the front shows their portrait,
-where they are, what's next and their battery. **Tap a person** and, in the same space, the portrait
-gives way to the details: where they are and since when, what's on now and next, battery, the sleep
-toggle and any extra stats. Tap again (or leave it for 25 seconds) to turn back. Holding a tile opens
-Home Assistant's own details for that person.
+Everyone in the home on one card: each person's portrait, where they are, what's next and their
+battery, with "All home", "No one home" or "2 of 4 home" at the top. Cars sit as chips in the
+top-right corner with their battery level.
+
+**Tap a person or a car** and the whole card becomes their page, with a breadcrumb (*‹ Family ›
+Mette*) to go back. A person's page has their whereabouts and since when, the plan for the day and
+the next days, battery, the sleep toggle and any extra stats. The car's page shows the car, its
+charge (with the limit marked), range, charging power and when it'll be full, the cable, climate
+(tap to start or stop), doors and odometer. The card goes back to the family by itself after a
+minute without a touch. Holding a person opens Home Assistant's own details for them.
+
+```yaml
+type: custom:hyggehub-family-card
+people: [...]                        # see below
+cars:
+  - name: ID.5
+    color: moonstone-grey            # moonstone-grey, glacier-white, black, blue, dark-blue, red, silver, green, or #hex
+    battery: sensor.id5_battery_level
+    range: sensor.id5_range
+    charging: binary_sensor.id5_charging        # or a sensor whose state says "charging"
+    charging_power: sensor.id5_charging_power   # W or kW
+    time_to_full: sensor.id5_remaining_charging_time   # minutes, or a timestamp sensor
+    target: sensor.id5_charge_limit             # %
+    plugged: binary_sensor.id5_plug
+    location: device_tracker.id5
+    climate: climate.id5            # or a switch; its tile toggles it
+    lock: lock.id5                  # shown only
+    odometer: sensor.id5_odometer
+```
+
+For a Volkswagen, the **VW Group Connect** integration (in HACS) provides these entities. It updates
+every few hours by default so as not to wake the car, so the page shows a recent snapshot.
 
 Options for each person:
 
@@ -325,12 +353,34 @@ Make an `input_boolean.ella_asleep` helper (Settings → Devices & services → 
 set it as `sleep`. Their details side then has a sleep row you tap at bedtime and again when they
 wake. While it's on, the portrait closes its eyes and the tile reads *Asleep*.
 
+### Usage (meters)
+
+For homes whose meters report totals (kWh, m³) rather than live power, such as the Danish
+**Målerportal** integration. The card reads the same long-term statistics as Home Assistant's Energy
+dashboard: today's hours, or this week's and this month's days, as small bars per meter, plus the net
+(used or exported) and how recent the readings are, since meters like these report hours late.
+
+```yaml
+type: custom:hyggehub-usage-card
+period: day                  # day | week | month, the view it opens on
+meters:
+  - entity: sensor.el_energi_dashboard
+    kind: import             # import | export | water | gas | heat | other (guessed if left out)
+  - entity: sensor.el_eksport_energi_dashboard
+    kind: export
+  - entity: sensor.koldt_vand_energi_dashboard
+    kind: water
+    name: Water              # optional
+```
+
 ### Weather, media, appliance, energy, header
 
 ```yaml
 type: custom:hyggehub-weather-card
 entity: weather.home
-slots: 6                     # forecast slots; hourly when the integration provides it
+name: Sønderborg             # the place shown at the top; defaults to Home Assistant's location name
+slots: 6                     # forecast slots per page; arrows page through the rest
+view: hourly                 # hourly | daily, the view it opens on (Hours / Days switch on the card)
 
 type: custom:hyggehub-media-card
 entity: media_player.living_room    # one speaker, or several (speakers and groups):
@@ -361,8 +411,11 @@ battery_soc: sensor.battery_level
 extras: [{ name: Spot price, entity: sensor.spot_price }]
 
 type: custom:hyggehub-header-card
-people: [person.alex, person.sam]
 chips: [{ entity: lock.front_door, icon: mdi:lock-outline }]
+people: [person.alex, person.sam]   # optional "All home / 2 of 3 home" chip
+clock: false                        # clock, greeting and date are all off by default
+greeting: false
+date: false
 ```
 
 ## How the theming works
@@ -374,10 +427,9 @@ user. It caches a copy per device so a reload paints the right look before the w
 
 The resolved palette is written as CSS custom properties on `<html>`: the `--hh-*` tokens the cards
 use, plus the Home Assistant variables listed in `apply()`. The backdrop is
-`--lovelace-background`, built from four soft colour fields. "Moving background" sways them by
-stepping their offsets once a second rather than animating them: an earlier version animated those
-values on `<html>`, which restyled the whole page every frame and made the iPhone app reload its page
-every half-minute or so. Only values that changed are written, for the same reason.
+`--lovelace-background`, built from four soft colour fields that stand still. An earlier version moved
+them by animating values on `<html>`, which restyled the whole page every frame and made the iPhone app
+reload its page every half-minute or so. Only values that changed are written, for the same reason.
 
 ### Animation rules
 

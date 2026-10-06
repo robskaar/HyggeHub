@@ -100,10 +100,6 @@ export class HyggeAppearancePanel extends LitElement {
         @input=${(e: Event) => this.update_(a => (a[slot].frost = Number((e.target as HTMLInputElement).value)))}
       />
       <div class="scale"><span>Clear glass</span><span>Heavy frost</span></div>
-      <div class="row">
-        <div><b>Moving background</b><small>The colours behind the glass sway slowly</small></div>
-        <button class="switch" type="button" role="switch" aria-checked=${look.drift} aria-label="${slot} moving background" @click=${() => this.update_(a => (a[slot].drift = !a[slot].drift))}></button>
-      </div>
     `;
   }
 

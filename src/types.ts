@@ -31,6 +31,7 @@ export interface HomeAssistant {
   callService(domain: string, service: string, data?: Record<string, unknown>, target?: Record<string, unknown>): Promise<unknown>;
   callWS<T>(message: Record<string, unknown>): Promise<T>;
   hassUrl(path?: string): string;
+  config?: { location_name?: string; time_zone?: string; unit_system?: Record<string, string> };
   formatEntityState?(stateObj: HassEntity, state?: string): string;
 }
 

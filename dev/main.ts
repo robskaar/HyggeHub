@@ -82,6 +82,20 @@ const put = (e: HassEntity) => (states[e.entity_id] = e);
   ...['front_door', 'terrace_door', 'back_door', 'kitchen_window', 'living_window', 'bedroom_window', 'bathroom_window'].map(id =>
     ent(`binary_sensor.${id}`, 'off', { device_class: id.includes('door') ? 'door' : 'window' }),
   ),
+  ent('sensor.id5_battery', '78', { unit_of_measurement: '%', device_class: 'battery' }),
+  ent('sensor.id5_range', '312', { unit_of_measurement: 'km', friendly_name: 'Range' }),
+  ent('binary_sensor.id5_charging', 'on', { device_class: 'battery_charging' }),
+  ent('sensor.id5_charging_power', '7.2', { unit_of_measurement: 'kW' }),
+  ent('sensor.id5_time_to_full', '45', { unit_of_measurement: 'min' }),
+  ent('sensor.id5_target', '80', { unit_of_measurement: '%' }),
+  ent('binary_sensor.id5_plugged', 'on', { device_class: 'plug' }),
+  ent('device_tracker.id5', 'home'),
+  ent('climate.id5', 'off', { friendly_name: 'Climate' }),
+  ent('lock.id5', 'locked'),
+  ent('sensor.id5_odometer', '23410', { unit_of_measurement: 'km' }),
+  ent('sensor.el_import', '18234.5', { unit_of_measurement: 'kWh', device_class: 'energy', state_class: 'total_increasing' }),
+  ent('sensor.el_export', '6120.2', { unit_of_measurement: 'kWh', device_class: 'energy', state_class: 'total_increasing' }),
+  ent('sensor.water', '412.33', { unit_of_measurement: 'm³', device_class: 'water', state_class: 'total_increasing' }),
   ent('weather.home', 'snowy', { temperature: -2, apparent_temperature: -6, wind_speed: 4, wind_speed_unit: 'm/s', wind_bearing: 315, humidity: 86, supported_features: 3 }),
   ent('media_player.living_room_speaker', 'playing', {
     friendly_name: 'Living room speaker',
@@ -157,7 +171,9 @@ const notifications: Record<string, any> = {
   battery: { notification_id: 'battery', title: 'Battery low', message: 'Hallway motion sensor is at 9%. It takes a CR2450 cell.', created_at: iso(now - 65 * 6e4) },
 };
 const conds = ['snowy', 'snowy', 'cloudy', 'cloudy', 'partlycloudy', 'sunny', 'sunny', 'partlycloudy'];
-const forecast = conds.map((c, i) => ({ datetime: iso(now + i * 36e5), condition: c, temperature: -2 + Math.floor(i / 2) }));
+const forecast = Array.from({ length: 30 }, (_, i) => ({ datetime: iso(now + i * 36e5), condition: conds[i % conds.length], temperature: -2 + Math.round(3 * Math.sin(i / 4)) }));
+const dailyConds = ['snowy', 'cloudy', 'partlycloudy', 'sunny', 'rainy', 'cloudy', 'sunny', 'partlycloudy', 'rainy', 'snowy'];
+const daily = dailyConds.map((c, i) => ({ datetime: iso(now + i * 864e5), condition: c, temperature: 1 + (i % 4), templow: -4 + (i % 3) }));
 
 const subs = new Map<string, Set<(m: any) => void>>();
 const emit = (key: string, msg: any) => subs.get(key)?.forEach(cb => cb(msg));
@@ -251,7 +267,7 @@ const connection = {
       setTimeout(() => cb({ items: todos[msg.entity_id] ?? [] } as T), 80);
     } else if (msg.type === 'weather/subscribe_forecast') {
       key = 'forecast';
-      setTimeout(() => cb({ type: msg.forecast_type, forecast } as T), 60);
+      setTimeout(() => cb({ type: msg.forecast_type, forecast: msg.forecast_type === 'daily' ? daily : forecast } as T), 60);
     } else if (msg.type === 'frontend/subscribe_user_data') {
       key = `userdata:${user.id}`;
     } else throw new Error(`Mock does not handle ${msg.type}`);
@@ -298,6 +314,24 @@ const calendarEvents: Record<string, Array<{ summary: string; start: string; end
 };
 
 async function callWS<T>(msg: Record<string, any>): Promise<T> {
+  if (msg.type === 'recorder/statistics_during_period') {
+    const start = new Date(msg.start_time).getTime();
+    const end = new Date(msg.end_time).getTime();
+    const step = msg.period === 'hour' ? 36e5 : 864e5;
+    // Readings arrive late (like Målerportal): nothing for the last three hours.
+    const until = end - 3 * 36e5;
+    const shape: Record<string, (t: Date) => number> = {
+      'sensor.el_import': t => (msg.period === 'hour' ? 0.25 + (t.getHours() >= 17 && t.getHours() <= 21 ? 0.9 : 0) + (t.getHours() < 6 ? 0.15 : 0) : 9 + (t.getDate() % 4)),
+      'sensor.el_export': t => (msg.period === 'hour' ? Math.max(0, Math.sin(((t.getHours() - 6) / 12) * Math.PI)) * 1.6 : 6 + (t.getDate() % 3) * 2),
+      'sensor.water': t => (msg.period === 'hour' ? ([7, 8, 18, 19, 20].includes(t.getHours()) ? 0.035 : 0.004) : 0.22 + (t.getDate() % 3) * 0.04),
+    };
+    const out: Record<string, Array<{ start: number; end: number; change: number }>> = {};
+    for (const id of msg.statistic_ids as string[]) {
+      out[id] = [];
+      for (let t = start; t < until; t += step) out[id].push({ start: t, end: t + step, change: +(shape[id]?.(new Date(t)) ?? 0).toFixed(3) });
+    }
+    return out as T;
+  }
   if (msg.type === 'call_service' && msg.domain === 'calendar' && msg.service === 'get_events') {
     const ids: string[] = [].concat(msg.target.entity_id);
     return { response: Object.fromEntries(ids.map(id => [id, { events: calendarEvents[id] ?? [] }])) } as T;
@@ -327,6 +361,7 @@ function publish() {
     callService,
     callWS,
     hassUrl: (p = '') => p,
+    config: { location_name: 'Northside' },
   };
   consumers.forEach(c => (c.hass = hass));
 }
@@ -342,7 +377,7 @@ function card(tag: string, config: Record<string, unknown>, parent: string) {
 }
 
 publish();
-card('hyggehub-header-card', { people: ['person.alex', 'person.sam'], chips: [{ entity: 'lock.front_door', icon: 'mdi:lock-outline' }, { entity: 'sensor.indoor_temperature', icon: 'mdi:thermometer' }] }, 'header');
+card('hyggehub-header-card', { chips: [{ entity: 'lock.front_door', icon: 'mdi:lock-outline' }, { entity: 'sensor.indoor_temperature', icon: 'mdi:thermometer' }] }, 'header');
 const family = [
   {
     entity: 'person.alex',
@@ -381,18 +416,39 @@ const family = [
     ],
   },
 ];
-card('hyggehub-family-card', { people: family }, 'family');
-card('hyggehub-notification-stack-card', {}, 'col-now');
+card(
+  'hyggehub-family-card',
+  {
+    people: family,
+    cars: [
+      {
+        name: 'ID.5',
+        color: 'moonstone-grey',
+        battery: 'sensor.id5_battery',
+        range: 'sensor.id5_range',
+        charging: 'binary_sensor.id5_charging',
+        charging_power: 'sensor.id5_charging_power',
+        time_to_full: 'sensor.id5_time_to_full',
+        target: 'sensor.id5_target',
+        plugged: 'binary_sensor.id5_plugged',
+        location: 'device_tracker.id5',
+        climate: 'climate.id5',
+        lock: 'lock.id5',
+        odometer: 'sensor.id5_odometer',
+      },
+    ],
+  },
+  'family',
+);
+card('hyggehub-notification-stack-card', {}, 'top-notes');
 card('hyggehub-weather-card', { entity: 'weather.home' }, 'col-now');
 card(
-  'hyggehub-energy-card',
+  'hyggehub-usage-card',
   {
-    solar: 'sensor.solar_power',
-    grid: 'sensor.grid_power',
-    grid_export: 'sensor.grid_export_power',
-    extras: [
-      { name: 'Solar today', entity: 'sensor.solar_energy_today' },
-      { name: 'Water today', entity: 'sensor.water_today' },
+    meters: [
+      { entity: 'sensor.el_import', kind: 'import' },
+      { entity: 'sensor.el_export', kind: 'export' },
+      { entity: 'sensor.water', kind: 'water' },
     ],
   },
   'col-now',
@@ -493,6 +549,14 @@ if (location.hash === '#open-notes') {
 // Dev-only: any hash containing "notes" hides the people sections so the notifications are on screen.
 if (location.hash.includes('notes')) ['family', 'header'].forEach(id => (document.getElementById(id)!.style.display = 'none'));
 
+// Dev-only: #open-person / #open-car open those pages of the family card, for screenshots.
+if (location.hash === '#open-person' || location.hash === '#open-car') {
+  setTimeout(() => {
+    const root = document.querySelector('hyggehub-family-card')?.shadowRoot;
+    const target = location.hash === '#open-car' ? root?.querySelector<HTMLElement>('.car-chip') : root?.querySelectorAll<HTMLElement>('.member')[2];
+    target?.click();
+  }, 1500);
+}
 // Dev-only: #open-family turns the first two family members to their details, for screenshots.
 if (location.hash === '#open-family') {
   setTimeout(() => {

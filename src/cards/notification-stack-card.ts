@@ -28,6 +28,7 @@ export interface NotificationStackConfig extends CardConfig {
   title?: string;
   /** Checked before the built-in rules; the first match decides icon and colour. */
   rules?: Rule[];
+  /** Default true: with no notifications the card disappears. false shows an "All caught up" note. */
   hide_when_empty?: boolean;
 }
 
@@ -221,7 +222,10 @@ export class HyggeNotificationStackCard extends HyggeCard<NotificationStackConfi
     for (const id of this.leaving) if (!this.notes[id]) this.leaving.delete(id);
     const list = this.list;
     const live = list.filter(n => !this.leaving.has(n.notification_id));
-    if (!live.length && this.config.hide_when_empty) return html``;
+    // Empty: take up no room at all, not even the gap a blank card would leave.
+    const hide = !live.length && this.config.hide_when_empty !== false;
+    this.style.display = hide ? 'none' : '';
+    if (hide) return html``;
     let depthOf = 0;
 
     return html`

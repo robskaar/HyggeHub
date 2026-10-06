@@ -22,7 +22,7 @@ export interface Look {
   theme: ThemeKey;
   /** Backdrop blur behind glass, in px (0-40). */
   frost: number;
-  /** Whether the backdrop's colours drift slowly (stepped once a second, never animated per frame). */
+  /** Unused since the moving background was removed; kept so settings saved earlier still read. */
   drift: boolean;
 }
 
@@ -95,27 +95,19 @@ const minutesOf = (hhmm: string) => {
 };
 
 /*
- * Four soft colour fields over the base colour. Their positions are offset by --hh-d1..4, which the
- * engine nudges once a second (see `drift`). An earlier version animated those offsets with a CSS
- * animation; that restyled the entire page every frame, and on iPhones the Home Assistant app's web view
- * was killed and reloaded every half-minute or so. A one-second step on fields this soft and this large
- * moves a few pixels and is not visible as a step, at a sixtieth of the cost.
+ * Four soft colour fields over the base colour, standing still. (Moving them was tried twice: animated
+ * it restyled the whole page every frame and got the iPhone app's page killed; stepped it didn't look good.)
  */
 function backdrop(p: Palette): string {
-  const field = (size: string, x: string, y: string, dx: number, dy: number, c: string) =>
-    `radial-gradient(${size} at calc(${x} + var(--hh-d${dx}, 0%)) calc(${y} + var(--hh-d${dy}, 0%)), ${c} 0%, transparent 70%)`;
+  const field = (size: string, x: string, y: string, c: string) => `radial-gradient(${size} at ${x} ${y}, ${c} 0%, transparent 70%)`;
   return [
-    field('60vmax 60vmax', '6%', '-4%', 1, 2, p.blob1),
-    field('52vmax 52vmax', '96%', '16%', 2, 3, p.blob2),
-    field('56vmax 46vmax', '42%', '108%', 3, 4, p.blob3),
-    field('34vmax 34vmax', '76%', '78%', 4, 1, p.blob4),
+    field('60vmax 60vmax', '6%', '-4%', p.blob1),
+    field('52vmax 52vmax', '96%', '16%', p.blob2),
+    field('56vmax 46vmax', '42%', '108%', p.blob3),
+    field('34vmax 34vmax', '76%', '78%', p.blob4),
     p.bg,
   ].join(', ');
 }
-
-/** One full sway of the backdrop takes this long; it is stepped once a second, never per frame. */
-const DRIFT_PERIOD_S = 120;
-const DRIFT_STEP_MS = 1000;
 
 export class ThemeEngine extends EventTarget {
   appearance: Appearance = clone(DEFAULT_APPEARANCE);
@@ -143,25 +135,7 @@ export class ThemeEngine extends EventTarget {
     this.reducedMQ.addEventListener('change', () => this.apply(true));
     // Sun and fixed-times rules change with the clock, not with any event.
     setInterval(() => this.apply(), 60_000);
-    setInterval(() => this.drift(), DRIFT_STEP_MS);
     this.apply(true);
-  }
-
-  private drifting = false;
-
-  /** Nudges the backdrop's colour fields one small step along a slow sway, when the user wants it. */
-  private drift() {
-    const root = document.documentElement;
-    const on = !!this.resolved?.look.drift && this.motionOn && !document.hidden;
-    if (!on) {
-      if (this.drifting) for (const n of [1, 2, 3, 4]) root.style.setProperty(`--hh-d${n}`, '0%');
-      this.drifting = false;
-      return;
-    }
-    this.drifting = true;
-    const t = ((Date.now() / 1000) % DRIFT_PERIOD_S) / DRIFT_PERIOD_S * 2 * Math.PI;
-    const offsets = [9 * Math.sin(t), -8 * Math.sin(t + 1.3), 7 * Math.sin(t + 2.6), -10 * Math.sin(t + 4)];
-    offsets.forEach((v, i) => root.style.setProperty(`--hh-d${i + 1}`, `${v.toFixed(2)}%`));
   }
 
   get motionOn(): boolean {

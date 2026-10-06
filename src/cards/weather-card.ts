@@ -1,8 +1,8 @@
 import { css, html, nothing, type PropertyValues } from 'lit';
 import { query, state } from 'lit/decorators.js';
 import { registerCard, HyggeCard } from '../shared/base-card';
-import { haIcon } from '../shared/icons';
-import { formatTime, lang } from '../shared/format';
+import { haIcon, icon } from '../shared/icons';
+import { formatTime, friendlyName, lang } from '../shared/format';
 import { base, glass } from '../shared/styles';
 import { engine } from '../theme/engine';
 import type { CardConfig, Unsubscribe } from '../types';
@@ -16,10 +16,16 @@ interface Forecast {
 
 export interface WeatherCardConfig extends CardConfig {
   entity: string;
-  /** How many forecast slots to show (hourly when the integration has it, otherwise daily). */
+  /** The place shown at the top, e.g. "Sønderborg". Defaults to Home Assistant's location name. */
+  name?: string;
+  /** How many forecast slots fit on one page; arrows page through the rest. Default 6. */
   slots?: number;
+  /** Which view opens first when the integration has both. Default hourly. */
+  view?: 'hourly' | 'daily';
   sun?: string;
 }
+
+type View = 'hourly' | 'daily';
 
 const ICONS: Record<string, string> = {
   'clear-night': 'mdi:weather-night',
@@ -58,10 +64,11 @@ interface Particle {
 }
 
 export class HyggeWeatherCard extends HyggeCard<WeatherCardConfig> {
-  @state() private forecast: Forecast[] = [];
-  @state() private forecastKind: 'hourly' | 'daily' = 'hourly';
+  @state() private forecasts: Partial<Record<View, Forecast[]>> = {};
+  @state() private view: View = 'hourly';
+  @state() private page = 0;
   @query('canvas') private canvas?: HTMLCanvasElement;
-  private unsub?: Promise<Unsubscribe>;
+  private unsubs: Array<Promise<Unsubscribe>> = [];
   private subscribedFor?: string;
   private raf?: number;
   private particles: Particle[] = [];
@@ -75,6 +82,7 @@ export class HyggeWeatherCard extends HyggeCard<WeatherCardConfig> {
 
   protected override validateConfig(c: WeatherCardConfig) {
     if (!c.entity?.startsWith('weather.')) throw new Error('`entity` must be a weather entity.');
+    if (c.view) this.view = c.view;
   }
 
   protected override watchedEntities() {
@@ -99,8 +107,8 @@ export class HyggeWeatherCard extends HyggeCard<WeatherCardConfig> {
   override disconnectedCallback() {
     super.disconnectedCallback();
     engine.removeEventListener('change', this.onTheme);
-    this.unsub?.then(u => u()).catch(() => {});
-    this.unsub = undefined;
+    for (const u of this.unsubs) u.then(f => f()).catch(() => {});
+    this.unsubs = [];
     this.subscribedFor = undefined;
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = undefined;
@@ -118,19 +126,41 @@ export class HyggeWeatherCard extends HyggeCard<WeatherCardConfig> {
     if (changed.has('hass')) this.syncLoop();
   }
 
+  /** Both forecasts the integration offers, so switching between hours and days is instant. */
   private subscribe() {
     const s = this.stateOf(this.config.entity);
     if (!s) return;
-    this.unsub?.then(u => u()).catch(() => {});
+    for (const u of this.unsubs) u.then(f => f()).catch(() => {});
     this.subscribedFor = this.config.entity;
     const features = (s.attributes.supported_features as number | undefined) ?? 0;
-    const kind = features & 2 ? 'hourly' : 'daily';
-    this.forecastKind = kind;
-    this.unsub = this.hass!.connection.subscribeMessage<{ forecast: Forecast[] }>(msg => (this.forecast = msg.forecast ?? []), {
-      type: 'weather/subscribe_forecast',
-      entity_id: this.config.entity,
-      forecast_type: kind,
-    }).catch(() => () => {});
+    const kinds: View[] = [...(features & 2 ? ['hourly' as View] : []), ...(features & 1 ? ['daily' as View] : [])];
+    if (!kinds.includes(this.view)) this.view = kinds[0] ?? 'daily';
+    this.unsubs = kinds.map(kind =>
+      this.hass!.connection.subscribeMessage<{ forecast: Forecast[] }>(msg => (this.forecasts = { ...this.forecasts, [kind]: msg.forecast ?? [] }), {
+        type: 'weather/subscribe_forecast',
+        entity_id: this.config.entity,
+        forecast_type: kind,
+      }).catch(() => () => {}),
+    );
+  }
+
+  private setView(e: Event, v: View) {
+    e.stopPropagation();
+    this.view = v;
+    this.page = 0;
+  }
+
+  private turn(e: Event, delta: number) {
+    e.stopPropagation();
+    this.page = Math.max(0, this.page + delta);
+  }
+
+  private get placeName(): string {
+    if (this.config.name) return this.config.name;
+    const fromHA = this.hass?.config?.location_name;
+    if (fromHA && !/^(home|hjem)$/i.test(fromHA)) return fromHA;
+    const fn = friendlyName(this.stateOf(this.config.entity));
+    return fn && !/^(home|hjem|forecast)/i.test(fn) ? fn : '';
   }
 
   // ---------- falling snow / rain on a canvas behind the content ----------
@@ -259,10 +289,28 @@ export class HyggeWeatherCard extends HyggeCard<WeatherCardConfig> {
     return { rise: new Date(rise), set: new Date(set), progress: Math.min(1, Math.max(0, progress)), hours: Math.floor(len / 36e5), minutes: Math.round((len % 36e5) / 6e4) };
   }
 
-  private slotLabel(f: Forecast, i: number) {
+  private slotLabel(f: Forecast) {
     const d = new Date(f.datetime);
-    if (this.forecastKind === 'daily') return i === 0 ? 'Today' : d.toLocaleDateString(lang(this.hass), { weekday: 'short' });
-    return i === 0 && Math.abs(d.getTime() - Date.now()) < 36e5 ? 'Now' : d.toLocaleTimeString(lang(this.hass), { hour: '2-digit' });
+    if (this.view === 'daily') {
+      const today = new Date().toDateString() === d.toDateString();
+      return today ? 'Today' : d.toLocaleDateString(lang(this.hass), { weekday: 'short' });
+    }
+    return Math.abs(d.getTime() - Date.now()) < 30 * 6e4 ? 'Now' : d.toLocaleTimeString(lang(this.hass), { hour: '2-digit' });
+  }
+
+  /** "Today 14–19", "Tomorrow 08–13", "Thu – Tue": what the current page covers. */
+  private pageLabel(list: Forecast[]): string {
+    if (!list.length) return '';
+    const first = new Date(list[0].datetime);
+    const last = new Date(list[list.length - 1].datetime);
+    const l = lang(this.hass);
+    if (this.view === 'daily') return `${first.toLocaleDateString(l, { weekday: 'short', day: 'numeric' })} – ${last.toLocaleDateString(l, { weekday: 'short', day: 'numeric' })}`;
+    const day = (d: Date) => {
+      const diff = Math.round((new Date(d.toDateString()).getTime() - new Date(new Date().toDateString()).getTime()) / 864e5);
+      return diff === 0 ? 'Today' : diff === 1 ? 'Tomorrow' : d.toLocaleDateString(l, { weekday: 'short' });
+    };
+    const hh = (d: Date) => d.toLocaleTimeString(l, { hour: '2-digit' });
+    return day(first) === day(last) ? `${day(first)} ${hh(first)}–${hh(last)}` : `${day(first)} ${hh(first)} – ${day(last)} ${hh(last)}`;
   }
 
   protected override render() {
@@ -278,11 +326,26 @@ export class HyggeWeatherCard extends HyggeCard<WeatherCardConfig> {
     const cloudy = !['sunny', 'clear-night'].includes(cond);
     const sunny = ['sunny', 'partlycloudy'].includes(cond);
     const day = this.daylight();
-    const slots = this.forecast.slice(0, this.config.slots ?? 6);
+    const per = this.config.slots ?? 6;
+    const all = this.forecasts[this.view] ?? [];
+    const pages = Math.max(1, Math.ceil(all.length / per));
+    const page = Math.min(this.page, pages - 1);
+    const slots = all.slice(page * per, page * per + per);
+    const both = !!this.forecasts.hourly && !!this.forecasts.daily;
+    const place = this.placeName;
 
     return html`
       <ha-card class="glass weather" @click=${() => this.moreInfo(this.config.entity)}>
         <canvas aria-hidden="true"></canvas>
+        <div class="top">
+          <span class="place">${place ? html`${haIcon('mdi:map-marker-outline')}${place}` : nothing}</span>
+          ${both
+            ? html`<span class="seg" role="group" aria-label="Forecast">
+                <button type="button" aria-pressed=${this.view === 'hourly'} @click=${(e: Event) => this.setView(e, 'hourly')}>Hours</button>
+                <button type="button" aria-pressed=${this.view === 'daily'} @click=${(e: Event) => this.setView(e, 'daily')}>Days</button>
+              </span>`
+            : nothing}
+        </div>
         <div class="main">
           <div>
             <div class="temp num">${deg(a.temperature)}</div>
@@ -295,13 +358,19 @@ export class HyggeWeatherCard extends HyggeCard<WeatherCardConfig> {
           </div>
         </div>
         ${slots.length
-          ? html`<div class="slots num" style="grid-template-columns:repeat(${slots.length},1fr)">
-              ${slots.map(
-                (f, i) => html`<div>
-                  <span class="h">${this.slotLabel(f, i)}</span>${haIcon(ICONS[f.condition ?? ''] ?? 'mdi:weather-cloudy')}<b>${deg(f.temperature)}</b>
-                </div>`,
-              )}
-            </div>`
+          ? html`<div class="pager">
+                <button class="pg" type="button" aria-label="Earlier" ?disabled=${page === 0} @click=${(e: Event) => this.turn(e, -1)}>${icon('left')}</button>
+                <span class="range num">${this.pageLabel(slots)}</span>
+                <button class="pg next" type="button" aria-label="Later" ?disabled=${page >= pages - 1} @click=${(e: Event) => this.turn(e, 1)}>${icon('left')}</button>
+              </div>
+              <div class="slots num" style="grid-template-columns:repeat(${per},1fr)">
+                ${slots.map(
+                  f => html`<div>
+                    <span class="h">${this.slotLabel(f)}</span>${haIcon(ICONS[f.condition ?? ''] ?? 'mdi:weather-cloudy')}<b>${deg(f.temperature)}</b>
+                    ${this.view === 'daily' && typeof f.templow === 'number' ? html`<small>${deg(f.templow)}</small>` : nothing}
+                  </div>`,
+                )}
+              </div>`
           : nothing}
         ${day
           ? html`<div class="daylight">
@@ -419,13 +488,91 @@ export class HyggeWeatherCard extends HyggeCard<WeatherCardConfig> {
           opacity: 0.85;
         }
       }
+      .top {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 6px;
+        min-height: 28px;
+      }
+      .place {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--hh-ink-2);
+        --mdc-icon-size: 16px;
+      }
+      .seg {
+        display: inline-flex;
+        padding: 3px;
+        border-radius: 11px;
+        background: var(--hh-glass-strong);
+        border: 1px solid var(--hh-stroke);
+      }
+      .seg button {
+        padding: 4px 10px;
+        border-radius: 8px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--hh-ink-2);
+      }
+      .seg button[aria-pressed='true'] {
+        background: var(--hh-accent);
+        color: var(--hh-on-accent);
+      }
+      .pager {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-top: 16px;
+        padding-top: 12px;
+        border-top: 1px solid var(--hh-line);
+      }
+      .range {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--hh-ink-2);
+      }
+      .pg {
+        width: 30px;
+        height: 30px;
+        border-radius: 10px;
+        display: grid;
+        place-items: center;
+        background: var(--hh-glass-strong);
+        border: 1px solid var(--hh-stroke);
+        transition: opacity 0.2s, transform 0.2s var(--spring);
+      }
+      .pg svg.i {
+        width: 16px;
+        height: 16px;
+      }
+      .pg.next svg.i {
+        transform: scaleX(-1);
+      }
+      .pg:active:not(:disabled) {
+        transform: scale(0.92);
+      }
+      .pg:disabled {
+        opacity: 0.3;
+        cursor: default;
+      }
+      .slots small {
+        font-size: 11px;
+        color: var(--hh-ink-3);
+        margin-top: -4px;
+      }
       .slots {
         position: relative;
         display: grid;
         gap: 4px;
-        margin-top: 18px;
-        padding-top: 14px;
-        border-top: 1px solid var(--hh-line);
+        margin-top: 10px;
         text-align: center;
         font-size: 12px;
         --mdc-icon-size: 18px;
