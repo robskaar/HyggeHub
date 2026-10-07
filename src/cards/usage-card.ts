@@ -71,6 +71,9 @@ export class HyggeUsageCard extends HyggeCard<UsageCardConfig> {
   @state() private period: Period = 'day';
   @state() private data: Record<string, Series> = {};
   @state() private error = '';
+  /** Day view only: today had no readings yet, so the card is showing yesterday. */
+  @state() private yesterday = false;
+  private windowStart?: Date;
   private loadedKey?: string;
   private ticker?: number;
 
@@ -118,35 +121,50 @@ export class HyggeUsageCard extends HyggeCard<UsageCardConfig> {
   private async load() {
     const hass = this.hass;
     if (!hass) return;
-    const ids = this.config.meters.map(m => m.entity);
     const start = periodStart(this.period);
     try {
-      const res = await hass.callWS<Record<string, Array<{ start: number | string; end: number | string; change?: number | null }>>>({
-        type: 'recorder/statistics_during_period',
-        start_time: start.toISOString(),
-        end_time: new Date().toISOString(),
-        statistic_ids: ids,
-        period: this.period === 'day' ? 'hour' : 'day',
-        types: ['change'],
-      });
-      const next: Record<string, Series> = {};
-      for (const id of ids) {
-        const rows = res?.[id] ?? [];
-        const buckets = rows.map(r => ({ start: new Date(r.start), change: r.change ?? 0 }));
-        const withData = rows.filter(r => (r.change ?? 0) !== 0);
-        const last = withData[withData.length - 1];
-        next[id] = {
-          total: rows.length ? buckets.reduce((a, b) => a + b.change, 0) : undefined,
-          buckets,
-          unit: String(this.stateOf(id)?.attributes.unit_of_measurement ?? ''),
-          upTo: last ? new Date(last.end) : undefined,
-        };
-      }
+      let next = await this.fetch(start, new Date());
+      let yesterday = false;
+      // Meters like Målerportal deliver a day's readings overnight, so "today" is usually empty until
+      // tomorrow. Rather than show nothing, show yesterday and say so.
+      if (this.period === 'day' && !Object.values(next).some(s => s.upTo)) {
+        const y = new Date(start.getTime() - 864e5);
+        next = await this.fetch(y, start);
+        yesterday = true;
+        this.windowStart = y;
+      } else this.windowStart = start;
+      this.yesterday = yesterday;
       this.data = next;
       this.error = '';
     } catch (err: any) {
       this.error = err?.message ?? 'Could not read the meter statistics';
     }
+  }
+
+  private async fetch(start: Date, end: Date): Promise<Record<string, Series>> {
+    const ids = this.config.meters.map(m => m.entity);
+    const res = await this.hass!.callWS<Record<string, Array<{ start: number | string; end: number | string; change?: number | null }>>>({
+      type: 'recorder/statistics_during_period',
+      start_time: start.toISOString(),
+      end_time: end.toISOString(),
+      statistic_ids: ids,
+      period: this.period === 'day' ? 'hour' : 'day',
+      types: ['change'],
+    });
+    const next: Record<string, Series> = {};
+    for (const id of ids) {
+      const rows = res?.[id] ?? [];
+      const buckets = rows.map(r => ({ start: new Date(r.start), change: r.change ?? 0 }));
+      const withData = rows.filter(r => (r.change ?? 0) !== 0);
+      const last = withData[withData.length - 1];
+      next[id] = {
+        total: rows.length ? buckets.reduce((a, b) => a + b.change, 0) : undefined,
+        buckets,
+        unit: String(this.stateOf(id)?.attributes.unit_of_measurement ?? ''),
+        upTo: last ? new Date(last.end) : undefined,
+      };
+    }
+    return next;
   }
 
   private setPeriod(p: Period) {
@@ -156,7 +174,7 @@ export class HyggeUsageCard extends HyggeCard<UsageCardConfig> {
 
   /** The bars: one per hour (day view) or per day (week and month), always filling the period. */
   private bars(series: Series, color: string) {
-    const start = periodStart(this.period);
+    const start = this.windowStart ?? periodStart(this.period);
     const slots = this.period === 'day' ? 24 : this.period === 'week' ? 7 : new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate();
     const step = this.period === 'day' ? 36e5 : 864e5;
     const values = new Array<number>(slots).fill(0);
@@ -165,7 +183,7 @@ export class HyggeUsageCard extends HyggeCard<UsageCardConfig> {
       if (i >= 0 && i < slots) values[i] += Math.max(0, b.change);
     }
     const max = Math.max(...values, 0.0001);
-    const nowIndex = Math.floor((Date.now() - start.getTime()) / step);
+    const nowIndex = this.yesterday ? slots : Math.floor((Date.now() - start.getTime()) / step);
     return html`<div class="bars" style="--c:${color};grid-template-columns:repeat(${slots},1fr)" aria-hidden="true">
       ${values.map((v, i) => html`<i class=${i > nowIndex ? 'future' : ''} style="--h:${Math.max(v > 0 ? 0.06 : 0.02, v / max)}"></i>`)}
     </div>`;
@@ -199,7 +217,7 @@ export class HyggeUsageCard extends HyggeCard<UsageCardConfig> {
       .map(m => m.series?.upTo)
       .filter((d): d is Date => !!d)
       .sort((a, b) => b.getTime() - a.getTime())[0];
-    const periodWord = this.period === 'day' ? 'today' : this.period === 'week' ? 'this week' : 'this month';
+    const periodWord = this.period === 'day' ? (this.yesterday ? 'yesterday' : 'today') : this.period === 'week' ? 'this week' : 'this month';
 
     return html`<ha-card class="glass usage">
       <div class="head">
@@ -213,6 +231,7 @@ export class HyggeUsageCard extends HyggeCard<UsageCardConfig> {
         </div>
       </div>
       ${this.error ? html`<p class="quiet">${this.error}</p>` : nothing}
+      ${this.period === 'day' && this.yesterday ? html`<p class="note">Showing yesterday. Today's readings arrive overnight.</p>` : nothing}
       <div class="meters">
         ${meters.map(m => {
           const a = amount(m.series?.total, m.unit);
@@ -226,7 +245,7 @@ export class HyggeUsageCard extends HyggeCard<UsageCardConfig> {
           </button>`;
         })}
       </div>
-      ${meters.length ? this.axis() : nothing}
+      ${meters.length ? html`<div class="axis-row"><span></span><span></span>${this.axis()}</div>` : nothing}
       <div class="foot">
         ${hasBoth && (imp || exp)
           ? html`<span class="net ${net < 0 ? 'out' : ''}">
@@ -286,7 +305,7 @@ export class HyggeUsageCard extends HyggeCard<UsageCardConfig> {
       }
       .meter {
         display: grid;
-        grid-template-columns: 38px minmax(84px, auto) 1fr;
+        grid-template-columns: 38px minmax(0, 1fr) minmax(0, 1.15fr);
         gap: 12px;
         align-items: center;
         padding: 10px 12px;
@@ -350,10 +369,21 @@ export class HyggeUsageCard extends HyggeCard<UsageCardConfig> {
       .bars i.future {
         opacity: 0.18;
       }
+      .axis-row {
+        display: grid;
+        grid-template-columns: 38px minmax(0, 1fr) minmax(0, 1.15fr);
+        gap: 12px;
+        padding: 4px 13px 0;
+      }
+      .note {
+        margin: -4px 0 10px;
+        font-size: 12px;
+        color: var(--hh-ink-3);
+      }
       .axis {
         display: flex;
         justify-content: space-between;
-        margin: 4px 12px 0 calc(12px + 38px + 12px + 84px + 12px);
+        min-width: 0;
         font-size: 10.5px;
         color: var(--hh-ink-3);
       }

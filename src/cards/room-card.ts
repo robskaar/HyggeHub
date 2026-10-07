@@ -131,12 +131,17 @@ export class HyggeRoomCard extends HyggeCard<RoomCardConfig> {
 
   private statusLine(): string {
     const ents = this.ents;
-    const lightsOn = ents.filter(e => e.kind === 'light' && this.isOn(e.entity, e.kind)).length;
-    const parts = [lightsOn ? `${lightsOn} light${lightsOn > 1 ? 's' : ''} on` : 'Lights off'];
+    const lights = ents.filter(e => e.kind === 'light');
+    const lightsOn = lights.filter(e => this.isOn(e.entity, e.kind)).length;
+    // A room without lights (a hallway with only a door sensor) shouldn't announce "Lights off".
+    const parts = lights.length ? [lightsOn ? `${lightsOn} light${lightsOn > 1 ? 's' : ''} on` : 'Lights off'] : [];
     for (const e of ents) {
-      const name = (e.name ?? friendlyName(this.stateOf(e.entity), e.entity)).toLowerCase();
+      const s = this.stateOf(e.entity);
+      const name = (e.name ?? friendlyName(s, e.entity)).toLowerCase();
       if (e.kind === 'fan' && this.isOn(e.entity, e.kind)) parts.push(`${name} running`);
       if (e.kind === 'cover') parts.push(`${name} ${this.isOn(e.entity, e.kind) ? 'open' : 'closed'}`);
+      if (e.entity.startsWith('binary_sensor.') && ['door', 'window', 'opening', 'garage_door'].includes(String(s?.attributes.device_class)))
+        parts.push(`${name} ${s?.state === 'on' ? 'open' : 'closed'}`);
     }
     return parts.join(' · ');
   }
