@@ -431,7 +431,14 @@ export class HyggeFamilyCard extends HyggeCard<FamilyCardConfig> {
     const hass = this.hass;
     if (!hass) return;
     this.events = await Promise.all(
-      this.config.people.map(p => (calendars(p).length ? fetchEvents(hass, calendars(p), force).then(ev => forPerson(ev, p.calendar_match)) : Promise.resolve(undefined))),
+      this.config.people.map(p => {
+        if (!calendars(p).length) return Promise.resolve(undefined);
+        // Only ask for calendars that exist: asking for a missing one makes Home Assistant log an
+        // error on every refresh. A configured but missing calendar reads as "nothing planned".
+        const present = calendars(p).filter(id => hass.states[id]);
+        if (!present.length) return Promise.resolve([] as CalEvent[]);
+        return fetchEvents(hass, present, force).then(ev => forPerson(ev, p.calendar_match));
+      }),
     );
   }
 

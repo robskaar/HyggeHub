@@ -5568,7 +5568,11 @@ const sa = A`
   async loadEvents(t) {
     const e = this.hass;
     e && (this.events = await Promise.all(
-      this.config.people.map((s) => ot(s).length ? Ls(e, ot(s), t).then((i) => Gi(i, s.calendar_match)) : Promise.resolve(void 0))
+      this.config.people.map((s) => {
+        if (!ot(s).length) return Promise.resolve(void 0);
+        const i = ot(s).filter((a) => e.states[a]);
+        return i.length ? Ls(e, i, t).then((a) => Gi(a, s.calendar_match)) : Promise.resolve([]);
+      })
     ));
   }
   // ---------- navigation ----------
