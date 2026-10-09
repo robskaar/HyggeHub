@@ -536,6 +536,8 @@ anchor('car', v(CAR.x + 1.4, 1.7, CAR.z - 1.0));
 anchor('home', v(-0.75, 0.35, HZ1 + 1.6));
 anchor('water', v(METER.x + 0.7, 0.9, METER.z + 0.4));
 anchor('bins', v(BINS.x - 1.2, 2.3, BINS.z + 0.2));
+// Above the porch roof: the alarm's state at the front door.
+anchor('alarm', v(0.4, 2.75, HZ1 + 0.75));
 
 // Every route ends at the meter cabinet on the front wall (x ≈ -0.45, y 0.35-0.85).
 const F = HZ1 + 0.07;

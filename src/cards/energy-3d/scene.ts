@@ -47,7 +47,7 @@ import islandUrl from '../../assets/island.glb?url';
 export const DEFAULT_MODEL = islandUrl;
 
 export type FlowKey = 'grid' | 'solar' | 'car' | 'water';
-export type LabelKey = FlowKey | 'home' | 'bins';
+export type LabelKey = FlowKey | 'home' | 'bins' | 'alarm';
 
 export interface Weather {
   /** 0-1: how much of the sky is cloud. */
@@ -399,6 +399,14 @@ export class IslandScene {
   private focusEase = 0;
   private focusSide: 'right' | 'bottom' = 'right';
   private settle = 0;
+  /** 1 right after the view appears, easing to 0: the camera glides in. */
+  private introT = 0;
+
+  /** Glide the camera in from a little further out and round to the side, as when a tab opens. */
+  intro() {
+    this.introT = 1;
+    if (!this.running) this.animateFor(1.6);
+  }
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -942,10 +950,12 @@ export class IslandScene {
     // Zoom: ease towards the focused spot and closer in, and slide the picture aside for the details.
     this.focusEase += ((this.focusOn ? 1 : 0) - this.focusEase) * (still && !cameraOnly ? 1 : 1 - Math.exp(-dt * 4));
     const f = this.focusEase;
-    const az = MathUtils.degToRad(34) + this.yaw;
-    const el = MathUtils.degToRad(27 + f * 4);
+    if (!still || cameraOnly) this.introT = Math.max(0, this.introT - dt / 1.3);
+    const ie = this.introT * this.introT * (3 - 2 * this.introT);
+    const az = MathUtils.degToRad(34) + this.yaw + ie * 0.55;
+    const el = MathUtils.degToRad(27 + f * 4 + ie * 10);
     const c = this.framing.center.clone().lerp(this.focusPoint, f);
-    const dist = this.camDistance * (1 - 0.5 * f);
+    const dist = this.camDistance * (1 - 0.5 * f) * (1 + ie * 0.55);
     this.camera.position.set(c.x + Math.sin(az) * Math.cos(el) * dist, c.y + Math.sin(el) * dist, c.z + Math.cos(az) * Math.cos(el) * dist);
     this.camera.lookAt(c);
     if (f > 0.001) {

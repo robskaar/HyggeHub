@@ -11,6 +11,7 @@ import './cards/weather-card';
 import './cards/media-card';
 import './cards/energy-card';
 import './cards/energy-3d-card';
+import './cards/home-card';
 import './cards/family-card';
 import './cards/bins-card';
 import './cards/usage-card';

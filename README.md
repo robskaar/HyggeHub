@@ -21,6 +21,9 @@ A Nordic glass design system for Home Assistant: thirteen custom cards, six comp
 | `hyggehub-room-card` | A room: the main button toggles all its lights, plus fans, blinds, climate and a dimmer |
 | `hyggehub-alarm-card` | The alarm's state in one circle; tapping it walks through mode → code → exit delay |
 | `hyggehub-countdown-card` | A date, a weekly event, a timer, an `input_datetime` or a calendar entry |
+| `hyggehub-home-card` | The whole home in 3D behind tabs (house, people, countdowns), filling a panel view |
+| `hyggehub-people-3d-card` | The family as little clay figures: who is home, away or asleep, and what's next for them |
+| `hyggehub-countdowns-3d-card` | Each countdown as a floating island dressed for the occasion: beach, gift, mountains, Christmas |
 | `hyggehub-energy-3d-card` | The home as a small 3D diorama: power and water flowing to the house, the car charging, the bins, live weather and daylight |
 | `hyggehub-bins-card` | The next bin collection with an icon for each kind of waste, then the next few, from your collection schedule |
 | `hyggehub-lists-card` | To-do lists you swipe between, with a completed group and a shared note |
@@ -189,9 +192,9 @@ Each entry is one bin. `day` is the weekday it is collected, `every_weeks` how o
 `first` any date it was or will be collected, which anchors fortnightly and four-weekly rounds. Bins
 collected on the same day are shown together.
 
-A bin's name decides its icons: "Papir/Pap og Glas" shows paper, cardboard and glass. For a
-two-compartment bin, "og", "and", "&", "+" or "|" separates the compartments; the 3D energy card colours
-each half of the lid by them. Built-in keywords cover the usual
+A bin's name decides its icons, one per compartment: "og", "and", "&", "+" or "|" separates the
+compartments, so "Papir/Pap og Glas" shows cardboard and glass, and the 3D energy card colours each half
+of the lid by them. A name without a separator is one compartment. Built-in keywords cover the usual
 Danish and English names (rest, mad, papir, pap, plast/MDK, glas, metal, farligt, tekstil, storskrald,
 have); anything else is shown as written. Add your own names, keywords, colours and icons under `bins`:
 
@@ -370,6 +373,42 @@ meters:
     kind: water
     name: Water              # optional
 ```
+
+### Home (3D, full screen)
+
+```yaml
+# A panel view, so the card fills the screen below Home Assistant's header.
+views:
+  - title: Home
+    type: panel
+    cards:
+      - type: custom:hyggehub-home-card
+        tabs: { house: Hus, people: Personer, countdowns: Countdowns }   # optional names
+        house:                  # everything the 3D energy card below takes
+          grid: sensor.grid_power
+          alarm: alarm_control_panel.home   # state at the front door; tap to open the alarm card
+          # or the alarm card's own settings: { entity: ..., modes: [home, away], exit_delay: 30, sensors: [...] }
+        people:                 # the same people as the family card
+          - entity: person.alex
+            # 3D extras: hair_style (buzz, short, long, bald) and beard (short, full)
+            avatar: { preset: man, hair: brown, hair_style: buzz, beard: short, eyes: green-brown }
+            # what they love dresses their diorama: cooking, tech, gardening, decor, bugs, pokemon, nature, cars
+            interests: [cooking, tech]
+            # model: /local/people/alex.glb   # a sculpted GLB instead of the built figure ("idle" animation plays)
+        countdowns:             # the same countdowns as the countdown card; a carousel, soonest first
+          - { name: Summer holiday, icon: mdi:beach, target: "2027-07-01T08:00" }
+          - { name: Alex, icon: mdi:cake-variant, target: "1994-09-29", yearly: true }   # turns 32
+```
+
+Only the tabs you configure appear, and each device remembers the last one open. Each view is its own 3D
+scene: the house with its flows, alarm, bins and weather (tap the weather for the hourly and daily
+forecast); the people as clay figurines on little dioramas of their interests, in a carousel with who's home at
+the top (green ring: home, faded: away, asleep: eyes shut and z's; tap one and they wave); the countdowns as a carousel of floating islands, soonest first, themed from their icon and name (beach
+and summer, gift and birthday, mountains and trips, Christmas), each with a ring that fills as the day
+comes; arrows, dots or a swipe move between them. A `yearly` countdown appears once, for its next date,
+stays "Today" all day when it comes, and then moves to next year; a birthday's label says how old they turn.
+Switching tabs slides the views across and the camera glides into the new scene.
+Tapping any label zooms in on it and opens its details beside it.
 
 ### Energy 3D
 

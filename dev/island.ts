@@ -4,6 +4,7 @@ import * as mdi from '@mdi/js';
 import type { HassEntity, HomeAssistant } from '../src/types';
 import { engine } from '../src/theme/engine';
 import '../src/cards/energy-3d-card';
+import '../src/cards/home-card';
 
 class MockHaCard extends HTMLElement {
   constructor() {
@@ -58,8 +59,15 @@ const put = (e: HassEntity) => (states[e.entity_id] = e);
   ent('sensor.el_eksport_energi_dashboard', '6120.2', { unit_of_measurement: 'kWh', device_class: 'energy' }),
   ent('sensor.koldt_vand_energi_dashboard', '412.3', { unit_of_measurement: 'm³', device_class: 'water' }),
   ent('sensor.virtuel_el_eksport_energi_dashboard', '9120.4', { unit_of_measurement: 'kWh', device_class: 'energy' }),
-  ent('weather.forecast_home', 'partlycloudy', { temperature: 6, wind_speed: 4, wind_speed_unit: 'm/s', wind_bearing: 270 }),
+  ent('weather.forecast_home', 'partlycloudy', { temperature: 6, wind_speed: 4, wind_speed_unit: 'm/s', wind_bearing: 270, supported_features: 3 }),
   ent('light.driveway', 'off'),
+  ent('alarm_control_panel.home', 'disarmed', { friendly_name: 'Alarm', code_format: 'number', code_arm_required: true, supported_features: 1 | 2 | 4 }),
+  ent('person.alex', 'home', { friendly_name: 'Alex' }),
+  ent('calendar.familien', 'off', { friendly_name: 'Familien' }),
+  ent('person.sam', 'home', { friendly_name: 'Sam' }),
+  ent('sensor.alex_phone_battery', '82', { unit_of_measurement: '%' }),
+  ent('sensor.sam_phone_battery', '34', { unit_of_measurement: '%' }),
+  ent('input_boolean.ella_asleep', 'on', { friendly_name: 'Ella asleep' }),
   ent('sun.sun', 'above_horizon', { elevation: 32, azimuth: 160 }),
   ent('sensor.solar_energy_today', '6.4', { unit_of_measurement: 'kWh' }),
   ent('sensor.spot_price', '1.12', { unit_of_measurement: 'kr/kWh' }),
@@ -85,6 +93,23 @@ function statistics(msg: { start_time: string; end_time: string; statistic_ids: 
   return out as any;
 }
 
+// A shared family calendar; each person's `calendar_match` picks their events out of it.
+function familyEvents() {
+  const at = (d: number, h: number, m = 0) => {
+    const t = new Date();
+    t.setDate(t.getDate() + d);
+    t.setHours(h, m, 0, 0);
+    return t.toISOString();
+  };
+  return [
+    { summary: 'Robert: Padel', start: at(0, 19), end: at(0, 20, 30), location: 'Padelhuset, Sønderborg' },
+    { summary: 'Mette: Planteskole', start: at(1, 10), end: at(1, 11), location: 'Plantorama' },
+    { summary: 'Pelle: Fodbold', start: at(1, 16), end: at(1, 17), location: 'Stadion' },
+    { summary: 'Hjalte: Vuggestue', start: at(1, 7, 30), end: at(1, 15), location: 'Mælkebøtten' },
+    { summary: 'Family: Middag hos mormor', start: at(2, 17), end: at(2, 20), location: 'Mormor' },
+  ];
+}
+
 const consumers: Array<HTMLElement & { hass?: HomeAssistant }> = [];
 function publish() {
   const hass = {
@@ -93,9 +118,30 @@ function publish() {
     themes: { darkMode: false },
     language: 'en-GB',
     locale: { language: 'en-GB' },
-    connection: { subscribeMessage: async () => () => {} },
+    connection: {
+      // Weather forecasts: 24 hours and 7 days of made-up but plausible weather.
+      subscribeMessage: async (cb: (m: unknown) => void, msg: any) => {
+        if (msg.type === 'weather/subscribe_forecast') {
+          const hourly = msg.forecast_type === 'hourly';
+          const conds = ['sunny', 'partlycloudy', 'cloudy', 'rainy', 'partlycloudy', 'sunny', 'snowy'];
+          const forecast = Array.from({ length: hourly ? 24 : 7 }, (_, i) => ({
+            datetime: new Date(Date.now() + (i + 1) * (hourly ? 36e5 : 864e5)).toISOString(),
+            condition: conds[(i + (hourly ? Math.floor(i / 4) : 0)) % conds.length],
+            temperature: Math.round(6 + Math.sin(i / (hourly ? 4 : 1.5)) * 4),
+            templow: hourly ? undefined : Math.round(1 + Math.sin(i / 1.5) * 3),
+            precipitation: i % 3 === 1 ? 1.2 : 0,
+          }));
+          setTimeout(() => cb({ forecast }), 50);
+        }
+        return () => {};
+      },
+    },
     callService: async () => ({}),
-    callWS: async (msg: any) => (msg.type === 'recorder/statistics_during_period' ? statistics(msg) : ({ value: null } as any)),
+    callWS: async (msg: any) => {
+      if (msg.type === 'recorder/statistics_during_period') return statistics(msg);
+      if (msg.type === 'call_service' && msg.service === 'get_events') return { response: { 'calendar.familien': { events: familyEvents() } } } as any;
+      return { value: null } as any;
+    },
     hassUrl: (p = '') => p,
   } as HomeAssistant;
   consumers.forEach(c => (c.hass = hass));
@@ -112,6 +158,7 @@ const config = {
   water: 'sensor.water_flow',
   // No weather: the card picks weather.forecast_home by itself, as on a standard install.
   driveway_lights: 'light.driveway',
+  alarm: 'alarm_control_panel.home',
   bins: schedule(),
   car: {
     name: 'ID.5',
@@ -129,10 +176,43 @@ function mount(parent: string, extra: Record<string, unknown> = {}) {
   document.getElementById(parent)!.appendChild(el);
 }
 publish();
-mount('wide', { height: 420, extras: [{ name: 'Solar today', entity: 'sensor.solar_energy_today' }, { name: 'Spot price', entity: 'sensor.spot_price' }] });
-mount('narrow', { height: 300, title: 'Phone width' });
+const homeMode = location.hash.includes('home');
+if (homeMode) {
+  const tab = /#tab-(\w+)/.exec(location.hash)?.[1];
+  if (tab) localStorage.setItem('hyggehub:home-tab', tab);
+  document.querySelector<HTMLElement>('.wrap')!.style.display = 'block';
+  document.querySelector<HTMLElement>('.wrap')!.style.padding = '0';
+  document.querySelector<HTMLElement>('.wrap')!.style.maxWidth = 'none';
+  document.querySelector<HTMLElement>('.cards')!.style.display = 'block';
+  document.getElementById('controls')!.style.display = 'none';
+  const home = document.createElement('hyggehub-home-card') as HTMLElement & { setConfig(c: unknown): void; hass?: HomeAssistant };
+  home.setConfig({
+    type: 'custom:hyggehub-home-card',
+    height: '100vh',
+    tabs: { house: 'Hus', people: 'Personer', countdowns: 'Countdowns' },
+    house: config,
+    people: [
+      { entity: 'person.alex', name: 'Robert', avatar: { preset: 'man', hair: 'brown', hair_style: 'buzz', beard: 'short', eyes: 'green-brown' }, battery: 'sensor.alex_phone_battery', interests: ['cooking', 'tech'], calendar: 'calendar.familien', calendar_match: 'Robert, Family' },
+      { entity: 'person.sam', name: 'Mette', avatar: { preset: 'woman', hair: 'brown', hair_style: 'long', eyes: 'blue' }, battery: 'sensor.sam_phone_battery', interests: ['gardening', 'decor'], calendar: 'calendar.familien', calendar_match: 'Mette, Family' },
+      { name: 'Pelle', avatar: { preset: 'child', hair: 'brown', eyes: 'brown' }, default_location: 'home', interests: ['bugs', 'pokemon', 'nature'], calendar: 'calendar.familien', calendar_match: 'Pelle, Family' },
+      { name: 'Hjalte', avatar: { preset: 'baby', hair: 'brown', eyes: 'blue' }, default_location: 'home', sleep: 'input_boolean.ella_asleep', interests: ['cars'], calendar: 'calendar.familien', calendar_match: 'Hjalte, Family' },
+    ],
+    countdowns: [
+      { name: 'Sommerferie', icon: 'mdi:beach', target: '2027-07-01T08:00', start: '2026-08-15' },
+      { name: 'Juleaften', icon: 'mdi:pine-tree', target: '2026-12-24', yearly: true },
+      { name: 'Robert', icon: 'mdi:cake-variant', target: '1994-09-29', yearly: true },
+      { name: 'Mette', icon: 'mdi:cake-variant', target: '1995-11-01', yearly: true },
+      { name: 'Pelle', icon: 'mdi:cake-variant', target: '2021-03-12', yearly: true },
+      { name: 'Hjalte', icon: 'mdi:cake-variant', target: '2025-08-20', yearly: true },
+    ],
+  });
+  consumers.push(home);
+  document.getElementById('wide')!.appendChild(home);
+}
+if (!homeMode) mount('wide', { height: 420, extras: [{ name: 'Solar today', entity: 'sensor.solar_energy_today' }, { name: 'Spot price', entity: 'sensor.spot_price' }] });
+if (!homeMode) mount('narrow', { height: 300, title: 'Phone width' });
 // Meters only, like a home with Målerportal and no live power sensor.
-mount('narrow', {
+if (!homeMode) mount('narrow', {
   height: 300,
   title: 'Meters only',
   grid: undefined,
@@ -254,5 +334,28 @@ location.hash
 const open = /#open-(\w+)/.exec(location.hash)?.[1];
 if (open)
   setTimeout(() => {
-    document.querySelectorAll('hyggehub-energy-3d-card').forEach(card => card.shadowRoot?.querySelector<HTMLButtonElement>(`.tag[data-key="${open}"]`)?.click());
+    const inHome = document.querySelector('hyggehub-home-card')?.shadowRoot?.querySelectorAll('.view > * > *') ?? [];
+    [...document.querySelectorAll('hyggehub-energy-3d-card'), ...inHome].forEach(card =>
+      card.shadowRoot?.querySelector<HTMLButtonElement>(open === 'weather' ? '.weather' : `.tag[data-key="${open}"]`)?.click(),
+    );
   }, 3500);
+// Dev-only: #chip-2 picks the third person (or countdown) in a carousel, for screenshots.
+const chip = /#chip-(\d+)/.exec(location.hash)?.[1];
+if (chip)
+  setTimeout(() => {
+    const inHome = document.querySelector('hyggehub-home-card')?.shadowRoot?.querySelectorAll('.view > * > *') ?? [];
+    [...inHome].forEach(card =>
+      card.shadowRoot?.querySelectorAll<HTMLButtonElement>('.summary button, .dots button')[Number(chip)]?.click(),
+    );
+  }, 3500);
+// Dev-only: #still turns animation off (as the Appearance panel's motion switch does), so screenshots
+// show each scene in its settled state instead of mid-bounce.
+if (location.hash.includes('still')) {
+  // Again after the mock hass has loaded the saved appearance over it.
+  const still = () => {
+    (engine as any).appearance.motion = false;
+    engine.apply(true);
+  };
+  still();
+  [300, 1000, 2500].forEach(ms => setTimeout(still, ms));
+}

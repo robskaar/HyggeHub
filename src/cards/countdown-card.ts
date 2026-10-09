@@ -4,7 +4,7 @@ import { haIcon } from '../shared/icons';
 import { durationSeconds, formatDay, formatTime, numeric, pad, splitDuration } from '../shared/format';
 import { base, glass } from '../shared/styles';
 import { engine } from '../theme/engine';
-import type { CardConfig } from '../types';
+import type { CardConfig, HomeAssistant } from '../types';
 
 const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
@@ -33,13 +33,81 @@ export interface CountdownCardConfig extends CardConfig {
   done_text?: string;
 }
 
-interface Resolved {
+export interface Resolved {
   target?: Date;
   /** Fixed remaining time for a paused timer. */
   frozen?: number;
   progress?: number;
   subtitle?: string;
   idleText?: string;
+}
+
+/** When a countdown ends, how far through the wait it is, and what to say when it has nothing to count. */
+export function resolveCountdown(hass: HomeAssistant | undefined, c: CountdownCardConfig): Resolved {
+  const stateOf = (id?: string) => (id ? hass?.states[id] : undefined);
+  const now = new Date();
+  const r: Resolved = {};
+  const s = stateOf(c.entity);
+  const domain = c.entity?.split('.')[0];
+
+  if (s && domain === 'timer') {
+    const total = durationSeconds(s.attributes.duration);
+    if (s.state === 'active' && s.attributes.finishes_at) r.target = new Date(s.attributes.finishes_at);
+    else if (s.state === 'paused') r.frozen = durationSeconds(s.attributes.remaining) * 1000;
+    else r.idleText = 'Not running';
+    const left = r.frozen ?? (r.target ? r.target.getTime() - now.getTime() : total * 1000);
+    if (total) r.progress = 1 - left / (total * 1000);
+  } else if (s && domain === 'input_datetime') {
+    if (s.attributes.has_date) r.target = new Date((s.attributes.timestamp as number) * 1000);
+    else {
+      const t = new Date(now);
+      t.setHours(s.attributes.hour ?? 0, s.attributes.minute ?? 0, s.attributes.second ?? 0, 0);
+      if (t <= now) t.setDate(t.getDate() + 1);
+      r.target = t;
+    }
+  } else if (s && domain === 'calendar') {
+    if (s.attributes.start_time) r.target = new Date(String(s.attributes.start_time).replace(' ', 'T'));
+    r.subtitle = s.attributes.message as string | undefined;
+    if (!r.target) r.idleText = 'Nothing coming up';
+  } else if (s) {
+    const d = new Date(s.state);
+    if (!isNaN(d.getTime())) r.target = d;
+    else r.idleText = 'No time set';
+  } else if (c.entity) {
+    r.idleText = `${c.entity} is not available`;
+  } else if (c.weekly) {
+    const [h, m] = (c.weekly.time ?? '00:00').split(':').map(Number);
+    const day = WEEKDAYS.indexOf(String(c.weekly.day).slice(0, 3).toLowerCase());
+    const t = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m);
+    while (t.getDay() !== day || t <= now) t.setDate(t.getDate() + 1);
+    r.target = t;
+    r.progress = 1 - (t.getTime() - now.getTime()) / (7 * 864e5);
+  } else if (c.target) {
+    // A date without a time ("1994-09-29") is that day here, not midnight UTC.
+    const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(String(c.target).trim());
+    const t = new Date(dateOnly ? `${c.target}T00:00:00` : c.target);
+    if (c.yearly) {
+      t.setFullYear(now.getFullYear());
+      // On the day itself a yearly date stays "today" until midnight, then moves on to next year.
+      const today = dateOnly && t.toDateString() === now.toDateString();
+      if (t <= now && !today) t.setFullYear(now.getFullYear() + 1);
+    }
+    r.target = isNaN(t.getTime()) ? undefined : t;
+    if (!r.target) r.idleText = '`target` is not a date';
+  }
+
+  if (r.progress === undefined && r.target) {
+    if (c.start) {
+      const st = new Date(c.start).getTime();
+      r.progress = (now.getTime() - st) / (r.target.getTime() - st);
+    } else {
+      r.progress = 1 - Math.min(r.target.getTime() - now.getTime(), 365 * 864e5) / (365 * 864e5);
+    }
+  }
+  const v = numeric(stateOf(c.value_entity));
+  if (v !== undefined && c.value_target) r.progress = v / c.value_target;
+  if (r.progress !== undefined) r.progress = Math.min(1, Math.max(0, r.progress));
+  return r;
 }
 
 export class HyggeCountdownCard extends HyggeCard<CountdownCardConfig> {
@@ -79,66 +147,7 @@ export class HyggeCountdownCard extends HyggeCard<CountdownCardConfig> {
   }
 
   private resolve(): Resolved {
-    const c = this.config;
-    const now = new Date();
-    const r: Resolved = {};
-    const s = this.stateOf(c.entity);
-    const domain = c.entity?.split('.')[0];
-
-    if (s && domain === 'timer') {
-      const total = durationSeconds(s.attributes.duration);
-      if (s.state === 'active' && s.attributes.finishes_at) r.target = new Date(s.attributes.finishes_at);
-      else if (s.state === 'paused') r.frozen = durationSeconds(s.attributes.remaining) * 1000;
-      else r.idleText = 'Not running';
-      const left = r.frozen ?? (r.target ? r.target.getTime() - now.getTime() : total * 1000);
-      if (total) r.progress = 1 - left / (total * 1000);
-    } else if (s && domain === 'input_datetime') {
-      if (s.attributes.has_date) r.target = new Date((s.attributes.timestamp as number) * 1000);
-      else {
-        const t = new Date(now);
-        t.setHours(s.attributes.hour ?? 0, s.attributes.minute ?? 0, s.attributes.second ?? 0, 0);
-        if (t <= now) t.setDate(t.getDate() + 1);
-        r.target = t;
-      }
-    } else if (s && domain === 'calendar') {
-      if (s.attributes.start_time) r.target = new Date(String(s.attributes.start_time).replace(' ', 'T'));
-      r.subtitle = s.attributes.message as string | undefined;
-      if (!r.target) r.idleText = 'Nothing coming up';
-    } else if (s) {
-      const d = new Date(s.state);
-      if (!isNaN(d.getTime())) r.target = d;
-      else r.idleText = 'No time set';
-    } else if (c.entity) {
-      r.idleText = `${c.entity} is not available`;
-    } else if (c.weekly) {
-      const [h, m] = (c.weekly.time ?? '00:00').split(':').map(Number);
-      const day = WEEKDAYS.indexOf(String(c.weekly.day).slice(0, 3).toLowerCase());
-      const t = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m);
-      while (t.getDay() !== day || t <= now) t.setDate(t.getDate() + 1);
-      r.target = t;
-      r.progress = 1 - (t.getTime() - now.getTime()) / (7 * 864e5);
-    } else if (c.target) {
-      let t = new Date(c.target);
-      if (c.yearly) {
-        t.setFullYear(now.getFullYear());
-        if (t <= now) t.setFullYear(now.getFullYear() + 1);
-      }
-      r.target = isNaN(t.getTime()) ? undefined : t;
-      if (!r.target) r.idleText = '`target` is not a date';
-    }
-
-    if (r.progress === undefined && r.target) {
-      if (c.start) {
-        const st = new Date(c.start).getTime();
-        r.progress = (now.getTime() - st) / (r.target.getTime() - st);
-      } else {
-        r.progress = 1 - Math.min(r.target.getTime() - now.getTime(), 365 * 864e5) / (365 * 864e5);
-      }
-    }
-    const v = numeric(this.stateOf(c.value_entity));
-    if (v !== undefined && c.value_target) r.progress = v / c.value_target;
-    if (r.progress !== undefined) r.progress = Math.min(1, Math.max(0, r.progress));
-    return r;
+    return resolveCountdown(this.hass, this.config);
   }
 
   protected override updated() {

@@ -1,4 +1,4 @@
-import { css, html, nothing, type PropertyValues } from 'lit';
+import { html, nothing, type PropertyValues } from 'lit';
 import { state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { registerCard, HyggeCard } from '../shared/base-card';
@@ -8,11 +8,14 @@ import { lang, numeric, powerKw } from '../shared/format';
 import { hourSpan, readMeters, type MeterHour, type WaterHour } from '../shared/meters';
 import { carColour } from '../shared/car';
 import { base, glass } from '../shared/styles';
+import { worldStyles } from './energy-3d/world-styles';
 import { engine } from '../theme/engine';
 import type { CardConfig, HassEntity } from '../types';
 import type { EnergyCardConfig } from './energy-card';
 import type { FlowKey, IslandScene, LabelKey, LabelPosition, SceneState, Weather } from './energy-3d/scene';
 import './energy-card';
+import './alarm-card';
+import type { AlarmCardConfig } from './alarm-card';
 
 export interface Energy3dCardConfig extends CardConfig, Pick<EnergyCardConfig, 'title' | 'solar' | 'grid' | 'grid_export' | 'home' | 'extras'> {
   /** Water flow sensor (L/min, L/h or m³/h). Draws the water line from the meter. */
@@ -55,6 +58,11 @@ export interface Energy3dCardConfig extends CardConfig, Pick<EnergyCardConfig, '
   bins?: BinsSource;
   /** The driveway bollards: a light, switch or any on/off entity. Without it they come on at dusk. */
   driveway_lights?: string;
+  /**
+   * Alarm panel: its state shows at the front door, and tapping it opens the alarm card to arm or disarm.
+   * The entity alone, or the alarm card's own settings (entity, modes, exit_delay, sensors...).
+   */
+  alarm?: string | (Partial<AlarmCardConfig> & { entity: string });
   /** Compass bearing (degrees) the front door faces, so sunlight comes from the right side. Default 180, south. */
   facing?: number;
   /** Sun entity for the light. Defaults to sun.sun when it exists. */
@@ -65,7 +73,11 @@ export interface Energy3dCardConfig extends CardConfig, Pick<EnergyCardConfig, '
   model?: string;
   /** Height of the scene in px. */
   height?: number;
+  /** Set by the home card: fill the space given, no card chrome or title. */
+  embedded?: boolean;
 }
+
+type EmbeddedCard = HTMLElement & { setConfig(c: unknown): void; hass?: unknown };
 
 type Label = { key: LabelKey; value: string; caption: string; entity?: string; icon: string; color: string; kinds?: Kind[] };
 
@@ -75,6 +87,7 @@ const ICONS: Record<LabelKey, string> = {
   car: 'M5 16V12l2-5h10l2 5v4M5 16h14M3 12h18M7.5 16v2M16.5 16v2M7 13.5h1M16 13.5h1',
   home: 'M3 11l9-7 9 7M5 10v10h14V10M10 20v-5h4v5',
   bins: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
+  alarm: 'M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z',
   water: 'M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z',
 };
 
@@ -132,6 +145,21 @@ function weatherFrom(e?: HassEntity): Weather {
   return w;
 }
 
+const ALARM_STATES: Record<string, string> = {
+  disarmed: 'Disarmed',
+  armed_home: 'Armed home',
+  armed_away: 'Armed away',
+  armed_night: 'Armed night',
+  armed_vacation: 'Armed holiday',
+  armed_custom_bypass: 'Armed custom',
+  arming: 'Arming',
+  pending: 'Pending',
+  disarming: 'Disarming',
+  triggered: 'Triggered',
+};
+
+type Forecast = { datetime: string; condition?: string; temperature?: number; templow?: number; precipitation?: number; wind_speed?: number };
+
 const WEATHER_ICONS: Record<string, string> = {
   'clear-night': 'mdi:weather-night',
   cloudy: 'mdi:weather-cloudy',
@@ -181,7 +209,12 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
   @state() private meters?: { energy?: MeterHour; water?: WaterHour };
   private metersFor?: string;
   /** The label whose details are open over the scene. */
-  @state() private detail?: LabelKey;
+  @state() private detail?: LabelKey | 'weather';
+  @state() private forecast: { hourly?: Forecast[]; daily?: Forecast[] } = {};
+  @state() private forecastView: 'hourly' | 'daily' = 'hourly';
+  /** The alarm card shown in the alarm details, made once and kept. */
+  private alarmCard?: EmbeddedCard;
+  private forecastUnsubs: Array<Promise<() => void>> = [];
   private compact = false;
   private meterTicker?: number;
 
@@ -192,7 +225,7 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
   protected override watchedEntities() {
     const c = this.config;
     const car = c.car ?? {};
-    return [c.solar, c.grid, c.grid_export, c.home, c.water, c.grid_meter, c.grid_export_meter, c.solar_meter, c.water_meter, this.weatherId(), this.sunId(), car.battery, car.charging, car.charging_power, car.plugged, c.driveway_lights, ...(c.extras ?? []).map(e => e.entity)];
+    return [c.solar, c.grid, c.grid_export, c.home, c.water, c.grid_meter, c.grid_export_meter, c.solar_meter, c.water_meter, this.weatherId(), this.sunId(), car.battery, car.charging, car.charging_power, car.plugged, c.driveway_lights, this.alarmId(), ...(typeof c.alarm === 'object' ? (c.alarm.sensors ?? []) : []), ...(c.extras ?? []).map(e => e.entity)];
   }
 
   override getCardSize() {
@@ -215,6 +248,7 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
     engine.removeEventListener('change', this.onEngine);
     clearInterval(this.ticker);
     clearInterval(this.meterTicker);
+    this.unsubscribeForecast();
     this.island?.stop();
     // Home Assistant detaches cards when switching views and may bring them straight back. Keep the
     // WebGL context for a while, but not forever: browsers allow only a handful at once.
@@ -330,6 +364,23 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
         color: pickup.kinds[0]?.color ?? 'var(--hh-ink-2)',
         kinds: pickup.kinds,
       });
+    const alarm = this.stateOf(this.alarmId());
+    if (alarm)
+      out.push({
+        key: 'alarm',
+        value: ALARM_STATES[alarm.state] ?? alarm.state,
+        caption: 'Alarm',
+        entity: this.alarmId(),
+        icon: ICONS.alarm,
+        color:
+          alarm.state === 'triggered'
+            ? 'var(--hh-crit)'
+            : alarm.state.startsWith('armed')
+              ? 'var(--hh-accent)'
+              : alarm.state === 'disarmed'
+                ? 'var(--hh-ok)'
+                : 'var(--hh-warn)',
+      });
     if (c.water && r.water !== undefined) out.push({ key: 'water', value: `${r.water < 10 ? r.water.toFixed(1) : Math.round(r.water)} L/min`, caption: 'Water', entity: c.water, icon: ICONS.water, color: WATER });
     // From the water meter: the litres used in the newest hour with a reading.
     else if (!c.water && c.water_meter)
@@ -405,6 +456,7 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
   protected override updated(changed: PropertyValues) {
     super.updated(changed);
     if (this.fallback) this.fallback.hass = this.hass;
+    if (this.alarmCard) this.alarmCard.hass = this.hass;
     const key = this.meterKey();
     if (this.hass && key && key !== this.metersFor) {
       this.metersFor = key;
@@ -439,8 +491,8 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
       const bin = next?.bins.find(b => b.name === round.name);
       // Each compartment takes the colour of the first waste it names ("Papir/Pap og Glas": paper, glass);
       // a name without compartments spreads its kinds over the two lids.
-      const parts = compartments(round.name);
-      const colors = parts.length > 1 ? parts.map(part => kindsIn(src, part)[0].color) : (bin?.kinds.map(k => k.color) ?? ['#6b777d']);
+      // One kind per compartment, so the two lids take their two colours.
+      const colors = bin?.kinds.map(k => k.color) ?? compartments(round.name).map(part => kindsIn(src, part)[0].color);
       const n = next ? daysFromToday(next.day) : -1;
       return {
         colors: [colors[0], colors[1] ?? colors[0]],
@@ -457,7 +509,7 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
     const temp = Number(e.attributes.temperature);
     const w = weatherFrom(e);
     const unit = String(e.attributes.temperature_unit ?? '°');
-    return html`<button type="button" class="weather" @click=${() => this.moreInfo(e.entity_id)}>
+    return html`<button type="button" class="weather" @click=${() => this.openDetail('weather')}>
       ${haIcon(WEATHER_ICONS[e.state] ?? 'mdi:weather-partly-cloudy')}
       ${isFinite(temp) ? html`<b class="num">${Math.round(temp)}${unit.startsWith('°') ? '°' : ` ${unit}`}</b>` : nothing}
       <span class="num">${Math.round(w.wind)} m/s</span>
@@ -476,7 +528,7 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
       const canvas = this.renderRoot.querySelector('canvas');
       if (!canvas) return;
       try {
-        const { IslandScene, DEFAULT_MODEL } = await import('./energy-3d/scene');
+        const { IslandScene, DEFAULT_MODEL } = await import('./energy-3d/worlds');
         const island = new IslandScene(canvas, l => this.placeLabels(l), Math.min(window.devicePixelRatio || 1, 2));
         await island.load(this.config.model ?? DEFAULT_MODEL);
         this.island = island;
@@ -501,6 +553,7 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
       this.seen.observe(this);
       this.pushState();
       this.resume();
+      this.island.intro();
       stage.classList.add('ready');
     })());
   }
@@ -527,33 +580,131 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
     this.requestUpdate();
   }
 
+  /** The camera glides in, as when the house tab opens. */
+  intro() {
+    this.island?.intro();
+  }
+
   // ---------- details ----------
 
-  private openDetail(key: LabelKey) {
+  private openDetail(key: LabelKey | 'weather') {
     this.detail = key;
-    this.island?.focus(key, this.compact ? 'bottom' : 'right');
+    if (key === 'weather') {
+      this.subscribeForecast();
+      this.island?.focus(null);
+    } else this.island?.focus(key, this.compact ? 'bottom' : 'right');
   }
 
   private closeDetail() {
     this.detail = undefined;
     this.island?.focus(null);
+    this.unsubscribeForecast();
   }
 
-  private detailPanel(key: LabelKey) {
-    const label = this.labels().find(l => l.key === key);
-    const body = this.detailBody(key);
-    if (!label) return nothing;
-    const titles: Record<LabelKey, string> = { grid: 'Grid', solar: 'Solar', car: this.config.car?.name ?? 'Car', home: 'Home', water: 'Water', bins: 'Bins' };
+  /** Both forecasts the integration offers, so switching hours and days is instant. */
+  private subscribeForecast() {
+    const id = this.weatherId();
+    const s = this.stateOf(id);
+    if (!s || !this.hass) return;
+    this.unsubscribeForecast();
+    const features = (s.attributes.supported_features as number | undefined) ?? 0;
+    const kinds = [...(features & 2 ? (['hourly'] as const) : []), ...(features & 1 ? (['daily'] as const) : [])];
+    if (!kinds.includes(this.forecastView as never)) this.forecastView = kinds[0] ?? 'daily';
+    this.forecastUnsubs = kinds.map(kind =>
+      this.hass!.connection.subscribeMessage<{ forecast: Forecast[] }>(msg => (this.forecast = { ...this.forecast, [kind]: msg.forecast ?? [] }), {
+        type: 'weather/subscribe_forecast',
+        entity_id: id,
+        forecast_type: kind,
+      }).catch(() => () => {}) as Promise<() => void>,
+    );
+  }
+
+  private unsubscribeForecast() {
+    for (const u of this.forecastUnsubs) u.then(f => f()).catch(() => {});
+    this.forecastUnsubs = [];
+  }
+
+  private detailPanel(key: LabelKey | 'weather') {
+    const w = key === 'weather' ? this.stateOf(this.weatherId()) : undefined;
+    const label = key === 'weather' ? undefined : this.labels().find(l => l.key === key);
+    if (!label && !w) return nothing;
+    const body = key === 'weather' ? this.weatherBody() : this.detailBody(key);
+    const titles: Record<LabelKey | 'weather', string> = { grid: 'Grid', solar: 'Solar', car: this.config.car?.name ?? 'Car', home: 'Home', water: 'Water', bins: 'Bins', alarm: 'Alarm', weather: 'Weather' };
     return html`<div class="panel" role="dialog" aria-label=${titles[key]} @keydown=${(e: KeyboardEvent) => e.key === 'Escape' && this.closeDetail()}>
       <div class="panel-h">
         <button type="button" class="back" @click=${() => this.closeDetail()}>
           <svg viewBox="0 0 24 24" class="i"><path d="M15 6l-6 6 6 6"></path></svg>Back
         </button>
-        <span class="ic" style="color:${label.color}"><svg viewBox="0 0 24 24" class="i"><path d=${label.icon}></path></svg></span>
+        ${label
+          ? html`<span class="ic" style="color:${label.color}"><svg viewBox="0 0 24 24" class="i"><path d=${label.icon}></path></svg></span>`
+          : html`<span class="ic" style="color:var(--hh-accent)">${haIcon(WEATHER_ICONS[w!.state] ?? 'mdi:weather-partly-cloudy')}</span>`}
         <h4>${titles[key]}</h4>
       </div>
       <div class="panel-b">${body}</div>
     </div>`;
+  }
+
+  /** Now, then the hourly or daily forecast, switched with the two buttons at the top. */
+  private weatherBody() {
+    const e = this.stateOf(this.weatherId());
+    if (!e) return nothing;
+    const list = this.forecast[this.forecastView] ?? [];
+    const unit = String(e.attributes.temperature_unit ?? '°');
+    const deg = (v?: number) => (v === undefined || !isFinite(v) ? '–' : `${Math.round(v)}${unit.startsWith('°') ? '°' : unit}`);
+    const w = weatherFrom(e);
+    const both = !!this.forecast.hourly && !!this.forecast.daily;
+    const label = (f: Forecast) => {
+      const d = new Date(f.datetime);
+      return this.forecastView === 'hourly'
+        ? d.toLocaleTimeString(lang(this.hass), { hour: '2-digit', minute: '2-digit' })
+        : d.toLocaleDateString(lang(this.hass), { weekday: 'short', day: 'numeric' });
+    };
+    return html`
+      <div class="row"><span>Now</span><b class="num">${deg(Number(e.attributes.temperature))} · ${Math.round(w.wind)} m/s</b></div>
+      ${both
+        ? html`<div class="seg" role="tablist">
+            ${(['hourly', 'daily'] as const).map(
+              v => html`<button type="button" role="tab" aria-selected=${this.forecastView === v} @click=${() => (this.forecastView = v)}>${v === 'hourly' ? 'Hours' : 'Days'}</button>`,
+            )}
+          </div>`
+        : nothing}
+      ${list.length
+        ? html`<ul class="forecast">
+            ${list.slice(0, this.forecastView === 'hourly' ? 24 : 10).map(
+              f => html`<li>
+                <span class="num">${label(f)}</span>
+                <span class="fi">${haIcon(WEATHER_ICONS[f.condition ?? ''] ?? 'mdi:weather-partly-cloudy')}</span>
+                <b class="num">${deg(f.temperature)}${f.templow !== undefined ? html`<small> / ${deg(f.templow)}</small>` : nothing}</b>
+                <small class="num">${f.precipitation ? `${f.precipitation} mm` : ''}</small>
+              </li>`,
+            )}
+          </ul>`
+        : html`<p class="note">Reading the forecast…</p>`}
+      <button type="button" class="more" @click=${() => this.moreInfo(e.entity_id)}>History and settings</button>
+    `;
+  }
+
+  private alarmId(): string | undefined {
+    const a = this.config.alarm;
+    return typeof a === 'string' ? a : a?.entity;
+  }
+
+  /** The alarm card itself, frameless, so arming looks and works exactly as it does on the dashboard. */
+  private alarmBody() {
+    const a = this.config.alarm;
+    if (!a) return nothing;
+    if (!this.alarmCard) {
+      const el = document.createElement('hyggehub-alarm-card') as EmbeddedCard;
+      try {
+        el.setConfig({ type: 'custom:hyggehub-alarm-card', ...(typeof a === 'string' ? { entity: a } : a), embedded: true });
+      } catch (err) {
+        return html`<p class="note">${(err as Error).message}</p>`;
+      }
+      el.classList.add('embedded-card');
+      this.alarmCard = el;
+    }
+    this.alarmCard.hass = this.hass;
+    return html`${this.alarmCard}`;
   }
 
   private detailBody(key: LabelKey) {
@@ -598,6 +749,8 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
           ${car.charging && car.kw ? row('Charging at', watts(car.kw)) : nothing}
           ${history(cc.battery ?? cc.charging)}`;
       }
+      case 'alarm':
+        return this.alarmBody();
       case 'bins': {
         const all = c.bins?.schedule?.length ? pickups(c.bins).slice(0, 6) : [];
         const day = (d: Date) => {
@@ -639,8 +792,8 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
     const selfShare = r.home === undefined ? undefined : r.home > 0 ? Math.round(Math.max(0, Math.min(1, 1 - Math.max(r.grid, 0) / r.home)) * 100) : 100;
     const labels = this.labels();
     return html`
-      <ha-card class="glass">
-        <div class=${classMap({ stage: true, focused: !!this.detail })} style="height:${c.height ?? 340}px">
+      <ha-card class=${classMap({ glass: true, embedded: !!c.embedded })}>
+        <div class=${classMap({ stage: true, focused: !!this.detail })} style=${c.embedded ? 'height:100%' : `height:${c.height ?? 340}px`}>
           <canvas role="img" aria-label=${labels.map(l => `${l.caption} ${l.value}`).join(', ')}></canvas>
           <div class="loading" aria-hidden="true"></div>
           ${labels.map(
@@ -656,7 +809,7 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
         </div>
         <div class="card-h overlay">
           <div class="title">
-            <h3>${c.title ?? 'Energy'}</h3>
+            ${c.embedded ? nothing : html`<h3>${c.title ?? 'Energy'}</h3>`}
             ${this.weatherChip()}
           </div>
           ${r.metered
@@ -674,364 +827,8 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
     `;
   }
 
-  static override styles = [
-    base,
-    glass,
-    css`
-      ha-card.glass {
-        padding: 0;
-      }
-      .stage {
-        position: relative;
-        overflow: hidden;
-        touch-action: pan-y;
-        border-radius: inherit;
-      }
-      canvas {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        display: block;
-        cursor: grab;
-        opacity: 0;
-        transition: opacity 0.8s var(--ease);
-      }
-      canvas:active {
-        cursor: grabbing;
-      }
-      .ready canvas {
-        opacity: 1;
-      }
-      .loading {
-        position: absolute;
-        inset: 30% 30%;
-        border-radius: 50%;
-        background: radial-gradient(closest-side, var(--hh-accent-soft), transparent);
-        animation: pulse 1.6s ease-in-out infinite;
-      }
-      .ready .loading {
-        display: none;
-      }
-      @keyframes pulse {
-        50% {
-          opacity: 0.4;
-          transform: scale(0.9);
-        }
-      }
-      .overlay {
-        position: absolute;
-        top: 16px;
-        left: 18px;
-        right: 18px;
-        pointer-events: none;
-      }
-      .overlay .pill,
-      .overlay .weather {
-        pointer-events: auto;
-      }
-      .overlay {
-        align-items: flex-start;
-      }
-      .title {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        min-width: 0;
-      }
-      .weather {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        align-self: flex-start;
-        padding: 4px 10px 4px 8px;
-        border-radius: 999px;
-        background: var(--hh-glass-strong);
-        border: 1px solid var(--hh-stroke);
-        font-size: 12px;
-        color: var(--hh-ink-2);
-        --mdc-icon-size: 16px;
-      }
-      .weather b {
-        font-weight: 600;
-        color: var(--hh-ink);
-      }
-      .weather svg.wind {
-        width: 14px;
-        height: 14px;
-        transition: transform 0.6s var(--ease);
-      }
-      .pill .dot {
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        background: var(--hh-ok);
-      }
-      .tag {
-        position: absolute;
-        left: 0;
-        top: 0;
-        display: flex;
-        align-items: center;
-        gap: 7px;
-        padding: 4px 11px 4px 4px;
-        border-radius: 999px;
-        background: var(--hh-glass-strong);
-        -webkit-backdrop-filter: blur(14px) saturate(160%);
-        backdrop-filter: blur(14px) saturate(160%);
-        border: 1px solid var(--hh-stroke);
-        box-shadow: var(--hh-shadow);
-        text-align: left;
-        opacity: 0;
-        transition: opacity 0.4s;
-        will-change: transform;
-      }
-      .ready .tag {
-        opacity: 1;
-      }
-      .ready .tag.off {
-        opacity: 0;
-      }
-      .tag[disabled] {
-        cursor: default;
-      }
-      .ic {
-        width: 26px;
-        height: 26px;
-        border-radius: 50%;
-        display: grid;
-        place-items: center;
-        background: color-mix(in srgb, currentColor 16%, transparent);
-      }
-      .ic svg.i {
-        width: 16px;
-        height: 16px;
-      }
-      .txt {
-        display: flex;
-        flex-direction: column;
-        line-height: 1.1;
-      }
-      .txt b {
-        font-size: 13px;
-        font-weight: 600;
-        white-space: nowrap;
-      }
-      .txt small {
-        font-size: 9.5px;
-        font-weight: 600;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        color: var(--hh-ink-3);
-        white-space: nowrap;
-      }
-      .kinds {
-        display: flex;
-        gap: 3px;
-        margin-left: 2px;
-      }
-      .kind {
-        width: 22px;
-        height: 22px;
-        border-radius: 50%;
-        display: grid;
-        place-items: center;
-        color: #fff;
-        background: var(--c);
-        --mdc-icon-size: 13px;
-      }
-      .compact .kind {
-        width: 18px;
-        height: 18px;
-        --mdc-icon-size: 11px;
-      }
-      /* While details are open the labels step aside; the scene zooms in beside the panel. */
-      .focused .tag {
-        opacity: 0 !important;
-        pointer-events: none;
-      }
-      .panel {
-        position: absolute;
-        top: 60px;
-        right: 12px;
-        bottom: 12px;
-        width: min(48%, 320px);
-        display: flex;
-        flex-direction: column;
-        border-radius: 20px;
-        background: color-mix(in srgb, var(--hh-glass-strong) 82%, transparent);
-        -webkit-backdrop-filter: blur(18px) saturate(160%);
-        backdrop-filter: blur(18px) saturate(160%);
-        border: 1px solid var(--hh-stroke);
-        box-shadow: var(--hh-shadow);
-        overflow: hidden;
-        animation: panel-in 0.4s var(--ease) both;
-        z-index: 2;
-      }
-      .compact .panel {
-        top: auto;
-        left: 10px;
-        right: 10px;
-        bottom: 10px;
-        width: auto;
-        height: 56%;
-        animation-name: panel-up;
-      }
-      @keyframes panel-in {
-        from {
-          opacity: 0;
-          transform: translateX(16px);
-        }
-      }
-      @keyframes panel-up {
-        from {
-          opacity: 0;
-          transform: translateY(16px);
-        }
-      }
-      .panel-h {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 10px 12px 8px 8px;
-        border-bottom: 1px solid var(--hh-line);
-      }
-      .panel-h h4 {
-        margin: 0;
-        font-size: 14px;
-        font-weight: 600;
-      }
-      .back {
-        display: inline-flex;
-        align-items: center;
-        gap: 2px;
-        padding: 5px 10px 5px 4px;
-        border-radius: 999px;
-        font-size: 12.5px;
-        font-weight: 600;
-        color: var(--hh-accent);
-      }
-      .back:hover {
-        background: var(--hh-accent-soft);
-      }
-      .back svg.i {
-        width: 16px;
-        height: 16px;
-      }
-      .panel-b {
-        padding: 6px 14px 14px;
-        overflow-y: auto;
-        font-size: 13px;
-      }
-      .row {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        gap: 10px;
-        padding: 7px 0;
-        border-bottom: 1px solid var(--hh-line);
-      }
-      .row span {
-        color: var(--hh-ink-2);
-      }
-      .row b {
-        font-weight: 600;
-      }
-      .note {
-        margin: 10px 0 0;
-        font-size: 12px;
-        color: var(--hh-ink-3);
-        line-height: 1.4;
-      }
-      .note code {
-        font-size: 11px;
-      }
-      .more {
-        margin-top: 12px;
-        font-size: 12.5px;
-        font-weight: 600;
-        color: var(--hh-accent);
-        padding: 6px 0;
-      }
-      .pickups {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-      }
-      .pickups li {
-        padding: 9px 0;
-        border-bottom: 1px solid var(--hh-line);
-        display: grid;
-        gap: 6px;
-      }
-      .pickups .when {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-      }
-      .pickups .when b {
-        font-weight: 600;
-      }
-      .pickups .when small {
-        font-size: 11.5px;
-        color: var(--hh-ink-3);
-      }
-      .pickups .bin {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-size: 12.5px;
-        color: var(--hh-ink-2);
-      }
-      .pickups .kinds {
-        margin: 0;
-      }
-      .compact .tag {
-        padding-right: 9px;
-        gap: 5px;
-      }
-      .compact .ic {
-        width: 20px;
-        height: 20px;
-      }
-      .compact .ic svg.i {
-        width: 13px;
-        height: 13px;
-      }
-      .compact .txt b {
-        font-size: 12px;
-      }
-      .compact .txt small {
-        display: none;
-      }
-      .extras {
-        display: grid;
-        gap: 8px;
-        padding: 0 14px 14px;
-      }
-      .extras button {
-        padding: 10px;
-        border-radius: 14px;
-        background: var(--hh-glass-strong);
-        border: 1px solid var(--hh-stroke);
-        text-align: left;
-        min-width: 0;
-      }
-      .extras small {
-        display: block;
-        font-size: 11px;
-        color: var(--hh-ink-3);
-      }
-      .extras b {
-        font-size: 15px;
-        font-weight: 600;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        display: block;
-      }
-    `,
-  ];
+  static override styles = [base, glass, worldStyles];
+
 }
 
 registerCard('hyggehub-energy-3d-card', HyggeEnergy3dCard, 'HyggeHub Energy 3D', 'A floating island home with live power and water flows, weather and day/night light.');

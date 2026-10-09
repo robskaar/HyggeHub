@@ -41,6 +41,13 @@ export interface PersonConfig {
   default_location?: string;
   /** How many upcoming events the details side lists. Default 2. */
   agenda?: number;
+  /**
+   * What they love, for the 3D people view: props on their diorama and something they hold or wear.
+   * cooking, tech, gardening, decor, bugs, pokemon, nature, cars.
+   */
+  interests?: string[];
+  /** A sculpted GLB of them for the 3D people view, e.g. /local/people/robert.glb. */
+  model?: string;
 }
 
 export interface CarConfig {
@@ -80,10 +87,10 @@ export interface FamilyCardConfig extends CardConfig {
 type Presence = 'home' | 'zone' | 'away' | 'none';
 let seq = 0;
 
-const calendars = (p: PersonConfig) => (p.calendar ? ([] as string[]).concat(p.calendar) : []);
+export const calendars = (p: PersonConfig) => (p.calendar ? ([] as string[]).concat(p.calendar) : []);
 const watched = (p: PersonConfig) => [p.entity, p.battery, p.charging, p.distance, p.sleep, ...calendars(p), ...(p.stats ?? []).map(s => s.entity)];
 
-interface Status {
+export interface Status {
   presence: Presence;
   asleep: boolean;
   label: string;
@@ -104,7 +111,7 @@ const dayTime = (d: Date, hass?: HomeAssistant) => {
  * Where someone is. GPS wins whenever it knows a place (home or a named zone). When it only knows
  * "away", or there is no tracker, the calendar event happening now supplies the place.
  */
-function status(hass: HomeAssistant | undefined, p: PersonConfig, events?: CalEvent[]): Status {
+export function status(hass: HomeAssistant | undefined, p: PersonConfig, events?: CalEvent[]): Status {
   const s = p.entity ? hass?.states[p.entity] : undefined;
   const sleepState = p.sleep ? hass?.states[p.sleep] : undefined;
   const asleep = sleepState?.state === 'on';
@@ -154,7 +161,7 @@ function status(hass: HomeAssistant | undefined, p: PersonConfig, events?: CalEv
 }
 
 /** "Now", "16:30", "Tomorrow 08:00", "Thu 14:30", or "All day". */
-function whenText(e: CalEvent, isNow: boolean, hass?: HomeAssistant): string {
+export function whenText(e: CalEvent, isNow: boolean, hass?: HomeAssistant): string {
   if (isNow) return 'Now';
   const today = new Date();
   const tomorrow = new Date(today.getTime() + 864e5);
@@ -164,7 +171,7 @@ function whenText(e: CalEvent, isNow: boolean, hass?: HomeAssistant): string {
   return day ? `${day} ${formatTime(e.start, hass)}` : formatTime(e.start, hass);
 }
 
-function battery(hass: HomeAssistant | undefined, p: PersonConfig) {
+export function battery(hass: HomeAssistant | undefined, p: PersonConfig) {
   const s = p.battery ? hass?.states[p.battery] : undefined;
   const level = numeric(s);
   if (level === undefined) return undefined;

@@ -18,6 +18,10 @@ export interface AvatarOptions {
   skin?: string;
   /** Clothing colour, hex. Each preset has its own default. */
   shirt?: string;
+  /** Hair style for the 3D figure: buzz (very short), short, long, or bald. Default by preset. */
+  hair_style?: 'buzz' | 'short' | 'long' | 'bald';
+  /** Beard on the 3D figure: short (stubble-length, with a moustache) or full. */
+  beard?: 'short' | 'full';
 }
 
 const HAIR: Record<string, string> = {
@@ -41,6 +45,25 @@ const EYES: Record<string, [string, string]> = {
 };
 const SKIN: Record<string, string> = { light: '#f6d6bd', fair: '#efc4a2', medium: '#d9a07a', tan: '#b97a52', deep: '#7d4f35' };
 const SHIRT: Record<Preset, string> = { woman: '#7fa38f', man: '#40607a', child: '#e0a94a', baby: '#c8d9ea' };
+
+/** The colours a portrait is drawn with, for anything else that shows the same person (the 3D figures). */
+export function avatarColours(opts: AvatarOptions = {}) {
+  const preset: Preset = opts.preset ?? 'man';
+  // Iris colours, pupil side and rim: hazel is brown near the pupil and green at the rim.
+  const pair = opts.eyes ? (EYES[opts.eyes.toLowerCase()] ?? (opts.eyes.startsWith('#') ? [opts.eyes, opts.eyes] : EYES.brown)) : EYES.brown;
+  const eyes = pair[1];
+  const eyesInner = pair[0];
+  return {
+    preset,
+    hair: pick(opts.hair, HAIR, HAIR.brown),
+    skin: pick(opts.skin, SKIN, SKIN.fair),
+    shirt: opts.shirt ?? SHIRT[preset],
+    eyes,
+    eyesInner,
+    hairStyle: opts.hair_style ?? (preset === 'woman' ? 'long' : preset === 'baby' ? 'short' : 'short'),
+    beard: opts.beard,
+  };
+}
 
 const toRgb = (h: string) => {
   const s = h.replace('#', '');

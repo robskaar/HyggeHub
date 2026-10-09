@@ -23,6 +23,8 @@ export interface AlarmCardConfig extends CardConfig {
   /** Door and window binary sensors summarised under the orb. */
   sensors?: string[];
   mode_descriptions?: Partial<Record<Mode, string>>;
+  /** Set when shown inside another card's panel (the 3D house): no frame of its own, no name while idle. */
+  embedded?: boolean;
 }
 
 const MODES: Record<Mode, { label: string; icon: string; desc: string; feature: number; service: string }> = {
@@ -302,10 +304,10 @@ export class HyggeAlarmCard extends HyggeCard<AlarmCardConfig> {
     const showPips = this.flow === 'arm' && this.step !== 'idle' && this.availableModes.length > 1 && this.needsCode('arm');
 
     return html`
-      <ha-card class="glass alarm" data-visual=${visual}>
+      <ha-card class="glass alarm ${c.embedded ? 'embedded' : ''}" data-visual=${visual}>
         <div class="head">
           <button class="back" type="button" aria-label="Back" ?hidden=${this.step === 'idle'} @click=${this.back}>${icon('left')}</button>
-          <h3>${this.step === 'idle' ? name : this.flow === 'arm' ? (this.step === 'code' && this.mode ? `Arm · ${MODES[this.mode].label}` : 'Arm') : 'Disarm'}</h3>
+          <h3>${this.step === 'idle' ? (c.embedded ? '' : name) : this.flow === 'arm' ? (this.step === 'code' && this.mode ? `Arm · ${MODES[this.mode].label}` : 'Arm') : 'Disarm'}</h3>
           <div class="right">
             <span>${right}</span>
             ${showPips ? html`<span class="pips"><i class="on"></i><i class=${this.step === 'code' ? 'on' : ''}></i></span>` : nothing}
@@ -358,6 +360,17 @@ export class HyggeAlarmCard extends HyggeCard<AlarmCardConfig> {
     css`
       .alarm {
         --state: var(--hh-ok);
+      }
+      /* Inside another card's panel: the panel is the frame. */
+      ha-card.embedded {
+        background: transparent;
+        border: none;
+        border-radius: 0;
+        box-shadow: none;
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+        padding: 6px 0 0;
+        animation: none;
       }
       .alarm[data-visual='arming'],
       .alarm[data-visual='pending'],

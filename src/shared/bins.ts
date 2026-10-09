@@ -51,8 +51,9 @@ const DEFAULT_BINS: Required<BinType>[] = [
   { name: 'Restaffald', match: 'rest|residual|general', color: '#6b777d', icon: 'mdi:trash-can-outline' },
   // "Mad" on its own, not inside "madkarton" or "mad- og drikkekartoner" (those go with plastic).
   { name: 'Madaffald', match: 'madaffald|\\bmad\\b(?![\\s-]*(&|og)\\s*drikke)|food|bio|organ', color: '#5f8f47', icon: 'mdi:food-apple-outline' },
-  { name: 'Papir', match: 'papir|paper', color: '#3e72a8', icon: 'mdi:newspaper-variant-outline' },
+  // Pap before Papir: a shared paper compartment ("Papir/Pap") is shown with the cardboard icon.
   { name: 'Pap', match: '\\bpap\\b|cardboard', color: '#9a7552', icon: 'mdi:package-variant-closed' },
+  { name: 'Papir', match: 'papir|paper', color: '#3e72a8', icon: 'mdi:newspaper-variant-outline' },
   { name: 'Plast', match: 'plast|mdk|kartoner|plastic', color: '#8a5fb0', icon: 'mdi:bottle-soda-classic-outline' },
   { name: 'Glas', match: 'glas|glass', color: '#3b8d7c', icon: 'mdi:bottle-wine-outline' },
   { name: 'Metal', match: 'metal|dåse|\\bcans?\\b', color: '#7f8a93', icon: 'mdi:magnet' },
@@ -120,7 +121,9 @@ export function pickups(src: BinsSource): Pickup[] {
   const until = new Date(today.getTime() + AHEAD_DAYS * 864e5);
   (src.schedule ?? []).forEach((s, i) => {
     const weekday = WEEKDAYS.indexOf(String(s.day).slice(0, 3).toLowerCase());
-    const kinds = kindsIn(src, s.name, i);
+    // One icon per compartment: "Papir/Pap og Glas" is two compartments, so two icons, each the first
+    // kind its part names. A name without "og" is one compartment and one icon.
+    const kinds = compartments(s.name).map(part => kindsIn(src, part, i)[0]);
     let d = new Date(`${s.first}T00:00:00`);
     // Snap the anchor onto the collection weekday, then walk forward round by round.
     while (d.getDay() !== weekday) d = addDays(d, 1);
