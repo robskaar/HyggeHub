@@ -9,7 +9,6 @@ import './cards/countdown-card';
 import './cards/lists-card';
 import './cards/weather-card';
 import './cards/media-card';
-import './cards/appliance-card';
 import './cards/energy-card';
 import './cards/energy-3d-card';
 import './cards/family-card';

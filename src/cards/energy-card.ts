@@ -1,6 +1,8 @@
-import { css, html, nothing, svg } from 'lit';
+import { css, html, nothing, svg, type PropertyValues } from 'lit';
+import { state } from 'lit/decorators.js';
 import { registerCard, HyggeCard } from '../shared/base-card';
 import { powerKw } from '../shared/format';
+import { hourSpan, readMeters, type MeterHour } from '../shared/meters';
 import { base, glass } from '../shared/styles';
 import type { CardConfig } from '../types';
 
@@ -12,8 +14,15 @@ export interface EnergyCardConfig extends CardConfig {
    * Grid power: positive while importing, negative while exporting. If your meter reports import and
    * export as two sensors, put the import one here and the export one in `grid_export`.
    */
-  grid: string;
+  grid?: string;
   grid_export?: string;
+  /**
+   * Without a live `grid` sensor: meters (kWh, with long-term statistics). The card shows the newest hour
+   * with readings as averages; with bought, sold and produced all metered it also works out home use.
+   */
+  grid_meter?: string;
+  grid_export_meter?: string;
+  solar_meter?: string;
   /** Battery power: positive while discharging, negative while charging. */
   battery?: string;
   battery_soc?: string;
@@ -29,17 +38,53 @@ const HOME = { x: 270, y: 80 };
 const kwText = (v: number) => `${Math.abs(v) < 10 ? Math.abs(v).toFixed(1) : Math.round(Math.abs(v))} kW`;
 
 export class HyggeEnergyCard extends HyggeCard<EnergyCardConfig> {
+  /** The newest hour of meter readings, when there is no live grid sensor. */
+  @state() private meterHour?: MeterHour;
+  private metersFor?: string;
+  private meterTicker?: number;
+
   static getStubConfig() {
     return { solar: 'sensor.solar_power', grid: 'sensor.grid_power', battery: 'sensor.battery_power', battery_soc: 'sensor.battery_level' };
   }
 
   protected override validateConfig(c: EnergyCardConfig) {
-    if (!c.grid) throw new Error('Set at least the `grid` power sensor.');
+    if (!c.grid && !c.grid_meter) throw new Error('Set the `grid` power sensor, or the `grid_meter` energy meter.');
   }
 
   protected override watchedEntities() {
     const c = this.config;
-    return [c.solar, c.grid, c.grid_export, c.battery, c.battery_soc, c.home, ...(c.extras ?? []).map(e => e.entity)];
+    return [c.solar, c.grid, c.grid_export, c.battery, c.battery_soc, c.home, c.grid_meter, c.grid_export_meter, c.solar_meter, ...(c.extras ?? []).map(e => e.entity)];
+  }
+
+  override connectedCallback() {
+    super.connectedCallback();
+    // Meters report late and in batches; look for new readings every few minutes.
+    this.meterTicker = window.setInterval(() => void this.loadMeters(), 5 * 60_000);
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    clearInterval(this.meterTicker);
+  }
+
+  protected override updated(changed: PropertyValues) {
+    super.updated(changed);
+    const c = this.config;
+    const key = c.grid ? '' : [c.grid_meter, c.grid_export_meter, c.solar_meter].join(',');
+    if (this.hass && key && key !== this.metersFor) {
+      this.metersFor = key;
+      void this.loadMeters();
+    }
+  }
+
+  private async loadMeters() {
+    const c = this.config;
+    if (!this.hass || c.grid || !c.grid_meter) return;
+    try {
+      this.meterHour = (await readMeters(this.hass, { grid: c.grid_meter, gridExport: c.grid_export_meter, solar: c.solar_meter })).energy;
+    } catch (err) {
+      console.warn('HyggeHub: could not read the meter statistics', err);
+    }
   }
 
   override getCardSize() {
@@ -48,14 +93,18 @@ export class HyggeEnergyCard extends HyggeCard<EnergyCardConfig> {
 
   protected override render() {
     const c = this.config;
-    const solar = powerKw(this.stateOf(c.solar)) ?? 0;
-    const grid = (powerKw(this.stateOf(c.grid)) ?? 0) - (powerKw(this.stateOf(c.grid_export)) ?? 0);
+    // Live sensors, or (without a live grid sensor) the newest hour of meter readings.
+    const m = c.grid ? undefined : this.meterHour;
+    const metered = !c.grid;
+    const solar = metered && c.solar_meter ? (m?.solar ?? 0) : (powerKw(this.stateOf(c.solar)) ?? 0);
+    const grid = metered ? (m?.grid ?? 0) : (powerKw(this.stateOf(c.grid)) ?? 0) - (powerKw(this.stateOf(c.grid_export)) ?? 0);
     const battery = powerKw(this.stateOf(c.battery)) ?? 0;
-    const home = powerKw(this.stateOf(c.home)) ?? Math.max(0, solar + grid + battery);
-    const selfShare = home > 0 ? Math.round(Math.max(0, Math.min(1, 1 - Math.max(grid, 0) / home)) * 100) : 100;
+    const home = powerKw(this.stateOf(c.home)) ?? (metered ? m?.home : Math.max(0, solar + grid + battery));
+    const selfShare = home === undefined ? undefined : home > 0 ? Math.round(Math.max(0, Math.min(1, 1 - Math.max(grid, 0) / home)) * 100) : 100;
+    const showSolar = !!c.solar || (metered && !!c.solar_meter);
 
     const rows: Source[] = [];
-    if (c.solar) rows.push({ key: 'solar', label: 'Solar', kw: solar, y: 0, color: 'var(--hh-warm)', reverse: false });
+    if (showSolar) rows.push({ key: 'solar', label: 'Solar', kw: solar, y: 0, color: 'var(--hh-warm)', reverse: false });
     if (c.battery) rows.push({ key: 'battery', label: 'Battery', kw: battery, y: 0, color: 'var(--hh-ok)', reverse: battery < 0 });
     rows.push({ key: 'grid', label: grid < 0 ? 'Export' : 'Grid', kw: grid, y: 0, color: 'var(--hh-accent)', reverse: grid < 0 });
     const step = rows.length === 1 ? 0 : 100 / (rows.length - 1);
@@ -73,9 +122,11 @@ export class HyggeEnergyCard extends HyggeCard<EnergyCardConfig> {
       <ha-card class="glass">
         <div class="card-h">
           <h3>${c.title ?? 'Energy now'}</h3>
-          <span class="pill"><span class="dot"></span>Self-sufficient ${selfShare}%</span>
+          ${metered
+            ? html`<span class="pill">${m ? `Meters ${hourSpan(m.hour)}` : 'Reading meters…'}${selfShare !== undefined ? ` · ${selfShare}% own` : ''}</span>`
+            : html`<span class="pill"><span class="dot"></span>Self-sufficient ${selfShare}%</span>`}
         </div>
-        <svg viewBox="0 0 320 160" role="img" aria-label=${rows.map(r => `${r.label} ${kwText(r.kw)}`).join(', ') + `, home ${kwText(home)}`}>
+        <svg viewBox="0 0 320 160" role="img" aria-label=${rows.map(r => `${r.label} ${kwText(r.kw)}`).join(', ') + `${home !== undefined ? `, home ${kwText(home)}` : ''}`}>
           ${rows.map(r => {
             const d = `M60 ${r.y} C150 ${r.y} 170 ${HOME.y} ${HOME.x - 26} ${HOME.y}`;
             const active = Math.abs(r.kw) > 0.02;
@@ -91,7 +142,7 @@ export class HyggeEnergyCard extends HyggeCard<EnergyCardConfig> {
           })}
           <circle class="node" cx=${HOME.x} cy=${HOME.y} r="26"></circle>
           <svg x=${HOME.x - 12} y=${HOME.y - 12} width="24" height="24" viewBox="0 0 24 24" class="glyph" style="stroke:var(--hh-ink)"><path d="M3 11l9-7 9 7M5 10v10h14V10M10 20v-5h4v5"></path></svg>
-          <text class="label" x=${HOME.x} y=${HOME.y + 46} text-anchor="middle">${kwText(home)}</text>
+          <text class="label" x=${HOME.x} y=${HOME.y + 46} text-anchor="middle">${home === undefined ? '–' : kwText(home)}</text>
           <text class="sub" x=${HOME.x} y=${HOME.y + 60} text-anchor="middle">Home</text>
         </svg>
         ${c.extras?.length

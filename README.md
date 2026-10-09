@@ -1,6 +1,6 @@
 # HyggeHub
 
-A Nordic glass design system for Home Assistant: ten custom cards, six complete themes, and an
+A Nordic glass design system for Home Assistant: thirteen custom cards, six complete themes, and an
 **Appearance** panel where each person in the home picks their own day and night look.
 
 - **Per-user looks.** Each Home Assistant user chooses a theme and frost level for
@@ -21,11 +21,11 @@ A Nordic glass design system for Home Assistant: ten custom cards, six complete 
 | `hyggehub-room-card` | A room: the main button toggles all its lights, plus fans, blinds, climate and a dimmer |
 | `hyggehub-alarm-card` | The alarm's state in one circle; tapping it walks through mode → code → exit delay |
 | `hyggehub-countdown-card` | A date, a weekly event, a timer, an `input_datetime` or a calendar entry |
+| `hyggehub-energy-3d-card` | The home as a small 3D diorama: power and water flowing to the house, the car charging, the bins, live weather and daylight |
 | `hyggehub-bins-card` | The next bin collection with an icon for each kind of waste, then the next few, from your collection schedule |
 | `hyggehub-lists-card` | To-do lists you swipe between, with a completed group and a shared note |
 | `hyggehub-weather-card` | The place and current weather with falling snow or rain, an hours/days forecast you page through, and today's daylight |
 | `hyggehub-media-card` | Now playing, with artwork, a live equaliser and controls |
-| `hyggehub-appliance-card` | A washer or dryer with a spinning drum, time left and wash/rinse/spin phases |
 | `hyggehub-energy-card` | Live power moving between solar, battery, grid and the home (needs live W/kW sensors) |
 | `hyggehub-usage-card` | Electricity in and out, water and gas for today, this week or this month, from meters such as Målerportal |
 | `hyggehub-family-card` | Everyone at once, plus the car as a chip. Tap a person or the car and the card becomes their page, with a breadcrumb back |
@@ -180,7 +180,7 @@ on the helper; the default is 100), and the card shows a counter.
 type: custom:hyggehub-bins-card
 upcoming: 3                         # later collections listed under the next one
 schedule:                           # one entry per bin
-  - { name: Rest og Mad,       day: mon, every_weeks: 2, first: "2026-10-19" }
+  - { name: Rest og Mad,       day: fri, every_weeks: 2, first: "2026-10-09" }
   - { name: Papir/Pap og Glas, day: fri, every_weeks: 4, first: "2026-10-09" }
   - { name: Plast og Metal,    day: fri, every_weeks: 4, first: "2026-10-23" }
 ```
@@ -371,7 +371,40 @@ meters:
     name: Water              # optional
 ```
 
-### Weather, media, appliance, energy, header
+### Energy 3D
+
+```yaml
+type: custom:hyggehub-energy-3d-card
+facing: 180                  # compass bearing the front door faces, so sunlight falls the right way
+grid: sensor.grid_power      # live power, W or kW: + import, − export
+solar: sensor.solar_power    # live; shows the panels on the roof
+water: sensor.water_flow     # live flow: L/min, L/h or m³/h
+# Without live sensors, the meters the usage card reads; the card shows the newest hour of readings:
+# grid_meter: sensor.el_energi_dashboard
+# grid_export_meter: sensor.el_eksport_energi_dashboard
+# solar_meter: sensor.produktion_energi_dashboard   # e.g. a separate production metering point
+# water_meter: sensor.koldt_vand_energi_dashboard
+car:
+  name: ID.5
+  color: white
+  battery: sensor.id5_battery
+  charging: binary_sensor.id5_charging
+  charging_power: sensor.id5_charging_power
+  plugged: binary_sensor.id5_plugged
+bins:                        # the same schedule as the bins card
+  schedule:
+    - { name: Rest og Mad, day: fri, every_weeks: 2, first: "2026-10-09" }
+driveway_lights: light.driveway   # optional; without it they come on at dusk
+```
+
+Only `grid` or `grid_meter` is required. Use live sensors or meters for the electricity, not a mix:
+from meters, grid, solar and home use all come from the same hour, so they add up. The flat
+`hyggehub-energy-card` takes the same meter options. Sun and weather come from `sun.sun` and
+`weather.forecast_home` (or the first weather entity), so clouds, rain, snow, wind and daylight follow
+the home's location with no setup. three.js and the model load only when the card is on screen, from the
+`scene-….js` file next to `hyggehub.js`; without WebGL the card shows the flat energy card.
+
+### Weather, media, energy, header
 
 ```yaml
 type: custom:hyggehub-weather-card
@@ -387,18 +420,6 @@ entity: media_player.living_room    # one speaker, or several (speakers and grou
 #   - entity: media_player.whole_house
 #     name: Everywhere
 volume: true                        # the volume bar; false hides it
-
-type: custom:hyggehub-appliance-card
-name: Washing machine
-entity: sensor.washer_status        # running states: run, wash, rinse, spin, drying… (override with running_states)
-machine: washer                     # washer | dryer
-remaining_entity: sensor.washer_remaining   # minutes, or a timestamp sensor
-total_minutes: 95
-program_entity: sensor.washer_program
-phase_entity: sensor.washer_phase   # optional; matched against phases
-phases: [Wash, Rinse, Spin]
-power_entity: sensor.washer_power   # optional alternative: running above power_threshold watts
-power_threshold: 5
 
 type: custom:hyggehub-energy-card
 solar: sensor.solar_power           # W or kW
@@ -465,4 +486,3 @@ parts most likely to need adjusting there:
 - whether Home Assistant re-applies its own theme over HyggeHub's colours at moments the engine
   doesn't catch (the engine re-applies after any theme or dark-mode change it sees)
 - `frontend/subscribe_user_data`, which older cores lack (reading and saving still work without it)
-- integration-specific state names for appliances (use `running_states` and `phases` to match yours)

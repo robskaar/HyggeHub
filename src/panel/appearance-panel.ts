@@ -188,7 +188,7 @@ export class HyggeAppearancePanel extends LitElement {
           <article class="card glass">
             <div class="card-head">${icon('sliders')}<h3>Motion</h3></div>
             <div class="row">
-              <div><b>Card animations</b><small>Spinning fans, falling snow, the washing drum, the equaliser</small></div>
+              <div><b>Card animations</b><small>Spinning fans, falling snow, the equaliser</small></div>
               <button class="switch" type="button" role="switch" aria-checked=${a.motion} aria-label="Card animations" @click=${() => this.update_(x => (x.motion = !x.motion))}></button>
             </div>
             <div class="row">

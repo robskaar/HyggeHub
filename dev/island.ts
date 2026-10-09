@@ -54,12 +54,36 @@ const put = (e: HassEntity) => (states[e.entity_id] = e);
   ent('binary_sensor.id5_charging', 'on'),
   ent('binary_sensor.id5_plugged', 'on'),
   ent('sensor.water_flow', '0', { unit_of_measurement: 'L/min' }),
+  ent('sensor.el_energi_dashboard', '18234.5', { unit_of_measurement: 'kWh', device_class: 'energy' }),
+  ent('sensor.el_eksport_energi_dashboard', '6120.2', { unit_of_measurement: 'kWh', device_class: 'energy' }),
+  ent('sensor.koldt_vand_energi_dashboard', '412.3', { unit_of_measurement: 'm³', device_class: 'water' }),
+  ent('sensor.virtuel_el_eksport_energi_dashboard', '9120.4', { unit_of_measurement: 'kWh', device_class: 'energy' }),
   ent('weather.forecast_home', 'partlycloudy', { temperature: 6, wind_speed: 4, wind_speed_unit: 'm/s', wind_bearing: 270 }),
   ent('light.driveway', 'off'),
   ent('sun.sun', 'above_horizon', { elevation: 32, azimuth: 160 }),
   ent('sensor.solar_energy_today', '6.4', { unit_of_measurement: 'kWh' }),
   ent('sensor.spot_price', '1.12', { unit_of_measurement: 'kr/kWh' }),
 ].forEach(put);
+
+// Hourly meter readings like Målerportal's: in kWh and m³, arriving a few hours late.
+function statistics(msg: { start_time: string; end_time: string; statistic_ids: string[] }) {
+  const lag = 3 * 36e5;
+  const start = new Date(msg.start_time).getTime();
+  const end = Math.floor((new Date(msg.end_time).getTime() - lag) / 36e5) * 36e5;
+  const out: Record<string, Array<{ start: number; end: number; change: number }>> = {};
+  for (const id of msg.statistic_ids) {
+    out[id] = [];
+    for (let t = Math.ceil(start / 36e5) * 36e5; t < end; t += 36e5) {
+      const h = new Date(t).getHours();
+      // Solar production peaks at noon; export is what the house doesn't use of it.
+      const made = Math.max(0, Math.sin(((h - 6) / 14) * Math.PI)) * 2.4;
+      const used = 0.35 + (h % 4) * 0.1;
+      const change = id.includes('vand') ? 0.012 + (h % 3) * 0.01 : id.includes('virtuel') ? made : id.includes('eksport') ? Math.max(0, made - used) : Math.max(0.05, used - made);
+      out[id].push({ start: t, end: t + 36e5, change });
+    }
+  }
+  return out as any;
+}
 
 const consumers: Array<HTMLElement & { hass?: HomeAssistant }> = [];
 function publish() {
@@ -71,7 +95,7 @@ function publish() {
     locale: { language: 'en-GB' },
     connection: { subscribeMessage: async () => () => {} },
     callService: async () => ({}),
-    callWS: async () => ({ value: null }) as any,
+    callWS: async (msg: any) => (msg.type === 'recorder/statistics_during_period' ? statistics(msg) : ({ value: null } as any)),
     hassUrl: (p = '') => p,
   } as HomeAssistant;
   consumers.forEach(c => (c.hass = hass));
@@ -107,6 +131,18 @@ function mount(parent: string, extra: Record<string, unknown> = {}) {
 publish();
 mount('wide', { height: 420, extras: [{ name: 'Solar today', entity: 'sensor.solar_energy_today' }, { name: 'Spot price', entity: 'sensor.spot_price' }] });
 mount('narrow', { height: 300, title: 'Phone width' });
+// Meters only, like a home with Målerportal and no live power sensor.
+mount('narrow', {
+  height: 300,
+  title: 'Meters only',
+  grid: undefined,
+  solar: undefined,
+  water: undefined,
+  grid_meter: 'sensor.el_energi_dashboard',
+  grid_export_meter: 'sensor.el_eksport_energi_dashboard',
+  solar_meter: 'sensor.virtuel_el_eksport_energi_dashboard',
+  water_meter: 'sensor.koldt_vand_energi_dashboard',
+});
 publish();
 
 // ---------- controls ----------

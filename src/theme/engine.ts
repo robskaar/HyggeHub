@@ -34,7 +34,7 @@ export interface Appearance {
   /** Fixed-times rule, "HH:MM". */
   from: string;
   to: string;
-  /** Card animations: spinning fans, falling snow, the washing drum... */
+  /** Card animations: spinning fans, falling snow, the equaliser... */
   motion: boolean;
 }
 

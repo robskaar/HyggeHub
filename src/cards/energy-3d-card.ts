@@ -1,8 +1,10 @@
 import { css, html, nothing, type PropertyValues } from 'lit';
+import { state } from 'lit/decorators.js';
 import { registerCard, HyggeCard } from '../shared/base-card';
 import { compartments, daysFromToday, kindsIn, pickups, type BinsSource, type Kind } from '../shared/bins';
 import { haIcon } from '../shared/icons';
 import { lang, numeric, powerKw } from '../shared/format';
+import { hourSpan, readMeters, type MeterHour, type WaterHour } from '../shared/meters';
 import { carColour } from '../shared/car';
 import { base, glass } from '../shared/styles';
 import { engine } from '../theme/engine';
@@ -14,6 +16,18 @@ import './energy-card';
 export interface Energy3dCardConfig extends CardConfig, Pick<EnergyCardConfig, 'title' | 'solar' | 'grid' | 'grid_export' | 'home' | 'extras'> {
   /** Water flow sensor (L/min, L/h or m³/h). Draws the water line from the meter. */
   water?: string;
+  /**
+   * Without a live `grid` power sensor: meters (kWh, with long-term statistics, as on the usage card).
+   * The card shows the newest hour with readings as averages, e.g. "380 W · Grid 11–12". With bought,
+   * sold and produced all metered it also works out home use. A live `grid` sensor wins when both are set;
+   * then `solar` should be live too, since an hour-old meter and a live sensor don't add up.
+   */
+  grid_meter?: string;
+  grid_export_meter?: string;
+  /** Solar production meter (kWh), e.g. a separate production metering point. */
+  solar_meter?: string;
+  /** Without a live `water` flow sensor: the water meter (m³ or L), read the same way. */
+  water_meter?: string;
   /**
    * Weather entity: clouds, rain, snow, fog, lightning, wind and chimney smoke follow it. Defaults to
    * weather.forecast_home (Met.no, set up by onboarding), else the first weather entity.
@@ -144,15 +158,19 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
   private seen?: IntersectionObserver;
   private onEngine = () => this.pushState();
   private ticker?: number;
+  /** The newest hour of meter readings, when the card reads meters instead of live sensors. */
+  @state() private meters?: { energy?: MeterHour; water?: WaterHour };
+  private metersFor?: string;
+  private meterTicker?: number;
 
   protected override validateConfig(c: Energy3dCardConfig) {
-    if (!c.grid) throw new Error('Set at least the `grid` power sensor.');
+    if (!c.grid && !c.grid_meter) throw new Error('Set the `grid` power sensor, or the `grid_meter` energy meter.');
   }
 
   protected override watchedEntities() {
     const c = this.config;
     const car = c.car ?? {};
-    return [c.solar, c.grid, c.grid_export, c.home, c.water, this.weatherId(), this.sunId(), car.battery, car.charging, car.charging_power, car.plugged, c.driveway_lights, ...(c.extras ?? []).map(e => e.entity)];
+    return [c.solar, c.grid, c.grid_export, c.home, c.water, c.grid_meter, c.grid_export_meter, c.solar_meter, c.water_meter, this.weatherId(), this.sunId(), car.battery, car.charging, car.charging_power, car.plugged, c.driveway_lights, ...(c.extras ?? []).map(e => e.entity)];
   }
 
   override getCardSize() {
@@ -166,12 +184,15 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
     if (this.island) this.resume();
     // Hourly: "tomorrow" becomes "today", and the bins go out and come back, with no entity changing.
     this.ticker = window.setInterval(() => this.requestUpdate(), 60 * 60_000);
+    // Meters report late and in batches; look for new readings every few minutes.
+    this.meterTicker = window.setInterval(() => void this.loadMeters(), 5 * 60_000);
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     engine.removeEventListener('change', this.onEngine);
     clearInterval(this.ticker);
+    clearInterval(this.meterTicker);
     this.island?.stop();
     // Home Assistant detaches cards when switching views and may bring them straight back. Keep the
     // WebGL context for a while, but not forever: browsers allow only a handful at once.
@@ -201,13 +222,41 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
 
   // ---------- reading the entities ----------
 
+  /**
+   * Live sensors first. Without a live grid sensor the electricity comes from the meters, all from the
+   * same hour, so grid, solar and home use agree with each other.
+   */
   private readings() {
     const c = this.config;
-    const solar = powerKw(this.stateOf(c.solar)) ?? 0;
-    const grid = (powerKw(this.stateOf(c.grid)) ?? 0) - (powerKw(this.stateOf(c.grid_export)) ?? 0);
-    const home = powerKw(this.stateOf(c.home)) ?? Math.max(0, solar + grid);
-    const water = litresPerMinute(this.stateOf(c.water));
-    return { solar, grid, home, water, car: this.carReading() };
+    const live = !!c.grid;
+    const e = live ? undefined : this.meters?.energy;
+    const solar = live || !c.solar_meter ? (powerKw(this.stateOf(c.solar)) ?? 0) : (e?.solar ?? 0);
+    const grid = live ? (powerKw(this.stateOf(c.grid)) ?? 0) - (powerKw(this.stateOf(c.grid_export)) ?? 0) : (e?.grid ?? 0);
+    const home = powerKw(this.stateOf(c.home)) ?? (live ? Math.max(0, solar + grid) : e?.home);
+    const w = c.water ? undefined : this.meters?.water;
+    const water = c.water ? litresPerMinute(this.stateOf(c.water)) : w ? w.litres / 60 : undefined;
+    return { solar, grid, home, water, car: this.carReading(), energyHour: e?.hour, waterHour: w?.hour, metered: !live };
+  }
+
+  /** Reads the meters (the newest hour of readings) when the live sensors are missing. */
+  private async loadMeters() {
+    const c = this.config;
+    if (!this.hass || !this.meterKey()) return;
+    try {
+      this.meters = await readMeters(this.hass, {
+        grid: c.grid ? undefined : c.grid_meter,
+        gridExport: c.grid ? undefined : c.grid_export_meter,
+        solar: c.grid ? undefined : c.solar_meter,
+        water: c.water ? undefined : c.water_meter,
+      });
+    } catch (err) {
+      console.warn('HyggeHub: could not read the meter statistics', err);
+    }
+  }
+
+  private meterKey(): string {
+    const c = this.config;
+    return [!c.grid && c.grid_meter, !c.grid && c.grid_export_meter, !c.grid && c.solar_meter, !c.water && c.water_meter].filter(Boolean).join(',');
   }
 
   private carReading() {
@@ -222,11 +271,22 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
   private labels(): Label[] {
     const c = this.config;
     const r = this.readings();
-    const out: Label[] = [
-      { key: 'grid', value: watts(r.grid), caption: r.grid < -0.02 ? 'Exporting' : 'Grid', entity: c.grid, icon: ICONS.grid, color: 'var(--hh-accent)' },
-    ];
-    if (c.solar) out.push({ key: 'solar', value: watts(r.solar), caption: 'Solar', entity: c.solar, icon: ICONS.solar, color: 'var(--hh-warm)' });
-    out.push({ key: 'home', value: watts(r.home), caption: 'Load', entity: c.home, icon: ICONS.home, color: 'var(--hh-ink)' });
+    const gridName = r.grid < -0.02 ? 'Exporting' : 'Grid';
+    // From meters: the hour's average, and which hour it was. Before the first reading: a dash.
+    const hourly = (kw: number) => (r.metered && !r.energyHour ? '–' : watts(kw));
+    const at = (name: string) => (r.metered && r.energyHour ? `${name} ${hourSpan(r.energyHour)}` : name);
+    const solarMetered = r.metered && !!c.solar_meter;
+    const out: Label[] = [{ key: 'grid', value: hourly(r.grid), caption: at(gridName), entity: c.grid ?? c.grid_meter, icon: ICONS.grid, color: 'var(--hh-accent)' }];
+    if (c.solar || solarMetered)
+      out.push({
+        key: 'solar',
+        value: solarMetered ? hourly(r.solar) : watts(r.solar),
+        caption: solarMetered ? at('Solar') : 'Solar',
+        entity: solarMetered ? c.solar_meter : c.solar,
+        icon: ICONS.solar,
+        color: 'var(--hh-warm)',
+      });
+    if (r.home !== undefined) out.push({ key: 'home', value: watts(r.home), caption: at('Load'), entity: c.home, icon: ICONS.home, color: 'var(--hh-ink)' });
     if (r.car) {
       const name = c.car?.name ?? 'Car';
       out.push({
@@ -249,6 +309,16 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
         kinds: pickup.kinds,
       });
     if (c.water && r.water !== undefined) out.push({ key: 'water', value: `${r.water < 10 ? r.water.toFixed(1) : Math.round(r.water)} L/min`, caption: 'Water', entity: c.water, icon: ICONS.water, color: WATER });
+    // From the water meter: the litres used in the newest hour with a reading.
+    else if (!c.water && c.water_meter)
+      out.push({
+        key: 'water',
+        value: r.waterHour && r.water !== undefined ? `${Math.round(r.water * 60)} L` : '–',
+        caption: r.waterHour ? `Water ${hourSpan(r.waterHour)}` : 'Water',
+        entity: c.water_meter,
+        icon: ICONS.water,
+        color: WATER,
+      });
     return out;
   }
 
@@ -261,10 +331,10 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
 
     const flows: Record<FlowKey, number | null> = {
       grid: speed(r.grid),
-      solar: c.solar ? speed(Math.max(0, r.solar)) : null,
+      solar: c.solar || (r.metered && c.solar_meter) ? speed(Math.max(0, r.solar)) : null,
       // The car's route runs car → house; charging runs it backwards, out to the car.
       car: !r.car?.plugged ? null : r.car.charging ? -speed(Math.max(r.car.kw ?? 3.7, 0.1)) : 0,
-      water: c.water ? (r.water && r.water > 0.05 ? 0.7 + Math.min(r.water, 20) * 0.08 : 0) : null,
+      water: c.water || c.water_meter ? (r.water && r.water > 0.05 ? 0.7 + Math.min(r.water, 20) * 0.08 : 0) : null,
     };
 
     let night = engine.resolved?.slot === 'night' ? 1 : 0;
@@ -296,7 +366,7 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
             ledColor: r.car.charging ? v('--hh-ok', '#4caf50') : r.car.plugged ? v('--hh-accent', '#2f6e86') : '#8a949b',
           }
         : null,
-      hidden: c.solar ? [] : ['solar'],
+      hidden: c.solar || c.solar_meter ? [] : ['solar'],
       bins: this.binRounds(),
       driveLights: c.driveway_lights ? (on(this.stateOf(c.driveway_lights)) ? 1 : 0) : night > 0.5 ? 1 : 0,
       motion: engine.motionOn,
@@ -313,6 +383,11 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
   protected override updated(changed: PropertyValues) {
     super.updated(changed);
     if (this.fallback) this.fallback.hass = this.hass;
+    const key = this.meterKey();
+    if (this.hass && key && key !== this.metersFor) {
+      this.metersFor = key;
+      void this.loadMeters();
+    }
     this.pushState();
   }
 
@@ -404,6 +479,7 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
 
   private useFallback() {
     this.failed = true;
+    // The flat energy card reads the same live sensors or meters.
     const el = document.createElement('hyggehub-energy-card') as NonNullable<typeof this.fallback>;
     el.setConfig({ ...this.config, type: 'custom:hyggehub-energy-card' });
     el.hass = this.hass;
@@ -426,7 +502,7 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
     if (this.fallback) return html`${this.fallback}`;
     const c = this.config;
     const r = this.readings();
-    const selfShare = r.home > 0 ? Math.round(Math.max(0, Math.min(1, 1 - Math.max(r.grid, 0) / r.home)) * 100) : 100;
+    const selfShare = r.home === undefined ? undefined : r.home > 0 ? Math.round(Math.max(0, Math.min(1, 1 - Math.max(r.grid, 0) / r.home)) * 100) : 100;
     const labels = this.labels();
     return html`
       <ha-card class="glass">
@@ -445,7 +521,7 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
         </div>
         <div class="card-h overlay">
           <h3>${c.title ?? 'Energy'}</h3>
-          <span class="pill"><span class="dot"></span>Self-sufficient ${selfShare}%</span>
+          ${selfShare !== undefined ? html`<span class="pill"><span class="dot"></span>Self-sufficient ${selfShare}%</span>` : nothing}
         </div>
         ${c.extras?.length
           ? html`<div class="extras num" style="grid-template-columns:repeat(${Math.min(3, c.extras.length)},1fr)">

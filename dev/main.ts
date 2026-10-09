@@ -107,9 +107,6 @@ const put = (e: HassEntity) => (states[e.entity_id] = e);
     media_position_updated_at: iso(now),
     volume_level: 0.42,
   }),
-  ent('sensor.washer_status', 'spin', { friendly_name: 'Washer' }),
-  ent('sensor.washer_remaining', '12', { unit_of_measurement: 'min' }),
-  ent('sensor.washer_program', 'Cottons 40° · 1200 rpm'),
   ent('sensor.solar_power', '1820', { unit_of_measurement: 'W' }),
   ent('sensor.grid_power', '410', { unit_of_measurement: 'W' }),
   ent('sensor.grid_export_power', '0', { unit_of_measurement: 'W' }),
@@ -483,7 +480,6 @@ card(
   },
   'col-security',
 );
-card('hyggehub-appliance-card', { name: 'Washing machine', entity: 'sensor.washer_status', remaining_entity: 'sensor.washer_remaining', total_minutes: 95, program_entity: 'sensor.washer_program' }, 'col-security');
 card('hyggehub-countdown-card', { name: 'Lofoten', subtitle: 'Flight to Bodø', icon: 'mdi:image-filter-hdr', target: `${new Date().getFullYear()}-12-18T09:40`, start: `${new Date().getFullYear()}-08-20` }, 'plans-ring');
 card('hyggehub-countdown-card', { name: 'Sauna', style: 'compact', icon: 'mdi:fire', animation: 'flicker', entity: 'timer.sauna', value_entity: 'sensor.sauna_temperature', value_target: 80, done_text: 'Ready' }, 'pair');
 {
@@ -541,13 +537,6 @@ setInterval(() => {
   set('sensor.sauna_temperature', String(Math.min(80, Number(states['sensor.sauna_temperature'].state) + 1)));
   publish();
 }, 4000);
-setInterval(() => {
-  const r = Number(states['sensor.washer_remaining'].state);
-  if (r > 0) {
-    set('sensor.washer_remaining', String(r - 1));
-    publish();
-  }
-}, 60_000);
 
 // Dev-only: #open-notes fans the notification stack out after load, for screenshots of the open state.
 if (location.hash === '#open-notes') {

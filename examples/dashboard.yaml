@@ -94,12 +94,6 @@ views:
               - binary_sensor.front_door
               - binary_sensor.terrace_door
               - binary_sensor.kitchen_window
-          - type: custom:hyggehub-appliance-card
-            name: Washing machine
-            entity: sensor.washer_status
-            remaining_entity: sensor.washer_remaining
-            program_entity: sensor.washer_program
-            total_minutes: 95
 
       - type: grid
         cards:
