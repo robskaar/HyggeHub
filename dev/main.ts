@@ -299,14 +299,6 @@ const calendarEvents: Record<string, Array<{ summary: string; start: string; end
     { summary: 'Football', start: rel(7 * 60), end: rel(8 * 60), location: 'Riverside Sports Park, Mill Road' },
     { summary: 'Playdate at Lily’s', start: at(1, 14, 30), end: at(1, 17), location: 'Lily’s house, 12 Oak Avenue' },
   ],
-  // Like the Affaldshåndtering DK integration's calendar: one event per collection, saying what goes.
-  'calendar.affald': [
-    { summary: 'Mad- og restaffald', start: at(1, 7), end: at(1, 15) },
-    { summary: 'Papir og plast/MDK', start: at(8, 7), end: at(8, 15) },
-    { summary: 'Mad- og restaffald', start: at(15, 7), end: at(15, 15) },
-    { summary: 'Glas, metal og tekstil', start: at(22, 7), end: at(22, 15) },
-    { summary: 'Mad- og restaffald', start: at(29, 7), end: at(29, 15) },
-  ],
   'calendar.ella': [
     { summary: '1-year check-up', start: rel(6 * 60), end: rel(6.5 * 60), location: 'Health centre, 8 Elm Street' },
     { summary: 'Nursery', start: at(1, 7, 30), end: at(1, 15), location: 'Sunflower Nursery' },
@@ -494,7 +486,26 @@ card(
 card('hyggehub-appliance-card', { name: 'Washing machine', entity: 'sensor.washer_status', remaining_entity: 'sensor.washer_remaining', total_minutes: 95, program_entity: 'sensor.washer_program' }, 'col-security');
 card('hyggehub-countdown-card', { name: 'Lofoten', subtitle: 'Flight to Bodø', icon: 'mdi:image-filter-hdr', target: `${new Date().getFullYear()}-12-18T09:40`, start: `${new Date().getFullYear()}-08-20` }, 'plans-ring');
 card('hyggehub-countdown-card', { name: 'Sauna', style: 'compact', icon: 'mdi:fire', animation: 'flicker', entity: 'timer.sauna', value_entity: 'sensor.sauna_temperature', value_target: 80, done_text: 'Ready' }, 'pair');
-card('hyggehub-bins-card', { calendar: 'calendar.affald' }, 'plans-ring');
+{
+  // Rest and Mad weekly from tomorrow; Papir/Pap every 4 weeks, Glas and Metal every 8.
+  const d = (n: number) => {
+    const t = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate() + n);
+    return { first: `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`, day: ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][t.getDay()] };
+  };
+  card(
+    'hyggehub-bins-card',
+    {
+      schedule: [
+        { name: 'Rest', every_weeks: 1, ...d(1) },
+        { name: 'Mad', every_weeks: 1, ...d(1) },
+        { name: 'Papir/Pap', every_weeks: 4, ...d(9) },
+        { name: 'Glas', every_weeks: 8, ...d(16) },
+        { name: 'Metal', every_weeks: 8, ...d(16) },
+      ],
+    },
+    'plans-ring',
+  );
+}
 card(
   'hyggehub-lists-card',
   { lists: [{ entity: 'todo.shopping_list', name: 'Groceries', done_label: 'Got it' }, { entity: 'todo.chores', name: 'To do', done_label: 'Done', placeholder: 'Add a task' }], note: { entity: 'input_text.quick_note', name: 'Note' } },

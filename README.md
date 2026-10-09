@@ -21,7 +21,7 @@ A Nordic glass design system for Home Assistant: ten custom cards, six complete 
 | `hyggehub-room-card` | A room: the main button toggles all its lights, plus fans, blinds, climate and a dimmer |
 | `hyggehub-alarm-card` | The alarm's state in one circle; tapping it walks through mode → code → exit delay |
 | `hyggehub-countdown-card` | A date, a weekly event, a timer, an `input_datetime` or a calendar entry |
-| `hyggehub-bins-card` | The next bin collection with an icon for each kind of waste, then the next few, from a collection calendar or a schedule |
+| `hyggehub-bins-card` | The next bin collection with an icon for each kind of waste, then the next few, from your collection schedule |
 | `hyggehub-lists-card` | To-do lists you swipe between, with a completed group and a shared note |
 | `hyggehub-weather-card` | The place and current weather with falling snow or rain, an hours/days forecast you page through, and today's daylight |
 | `hyggehub-media-card` | Now playing, with artwork, a live equaliser and controls |
@@ -178,28 +178,26 @@ on the helper; the default is 100), and the card shows a counter.
 
 ```yaml
 type: custom:hyggehub-bins-card
-calendar: calendar.affald           # a calendar with one event per collection
 upcoming: 3                         # later collections listed under the next one
-bins:                               # optional: your own names, keywords and colours
-  - name: Restaffald
-    match: rest
-    color: "#6b777d"
+schedule:                           # one entry per bin
+  - { name: Rest og Mad,       day: mon, every_weeks: 2, first: "2026-10-19" }
+  - { name: Papir/Pap og Glas, day: fri, every_weeks: 4, first: "2026-10-09" }
+  - { name: Plast og Metal,    day: fri, every_weeks: 4, first: "2026-10-23" }
 ```
 
-The best source is a collection calendar. In Denmark, the **Affaldshåndtering DK** integration
-(HACS custom repository `https://github.com/briis/affalddk`, type *Integration*) covers most
-municipalities and creates one, and **Waste Collection Schedule** does the same in many countries.
-Each event's text decides which bins it shows: "Mad- og restaffald" becomes Restaffald and Madaffald.
-Built-in keywords cover the usual Danish and English names (rest, mad, papir, pap, plast/MDK, glas,
-metal, farligt, tekstil, storskrald, have); anything else is shown as written.
+Each entry is one bin. `day` is the weekday it is collected, `every_weeks` how often (default 1), and
+`first` any date it was or will be collected, which anchors fortnightly and four-weekly rounds. Bins
+collected on the same day are shown together.
 
-Without a calendar, write the rounds by hand. `first` is any date that bin was collected:
+A bin's name decides its icons: "Papir/Pap og Glas" shows paper, cardboard and glass. For a
+two-compartment bin, "og", "and", "&", "+" or "|" separates the compartments; the 3D energy card colours
+each half of the lid by them. Built-in keywords cover the usual
+Danish and English names (rest, mad, papir, pap, plast/MDK, glas, metal, farligt, tekstil, storskrald,
+have); anything else is shown as written. Add your own names, keywords, colours and icons under `bins`:
 
 ```yaml
-type: custom:hyggehub-bins-card
-schedule:
-  - { name: Restaffald, day: tue, every_weeks: 2, first: "2026-10-06" }
-  - { name: Papir, day: wed, every_weeks: 4, first: "2026-10-14" }
+bins:
+  - { name: Restaffald, match: rest, color: "#6b777d", icon: mdi:trash-can-outline }
 ```
 
 The evening before a collection the card says *Put them out tonight* and its bins give a little hop.

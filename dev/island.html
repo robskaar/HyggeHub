@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HyggeHub 3D energy</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--lovelace-background, #dce3e5);
+        background-attachment: fixed;
+        color: var(--primary-text-color);
+        font-family: var(--hh-font, system-ui);
+      }
+      .wrap {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 300px;
+        gap: 24px;
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      .cards {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 360px;
+        gap: 24px;
+        align-items: start;
+      }
+      .controls {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 16px;
+        border-radius: 20px;
+        background: var(--hh-glass-strong);
+        border: 1px solid var(--hh-stroke);
+        font-size: 13px;
+        align-self: start;
+        position: sticky;
+        top: 24px;
+      }
+      .controls label {
+        display: grid;
+        gap: 4px;
+      }
+      .controls label span {
+        display: flex;
+        justify-content: space-between;
+        color: var(--hh-ink-2);
+      }
+      .controls h2 {
+        margin: 4px 0 0;
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--hh-ink-3);
+      }
+      .row {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .row button {
+        flex: 1;
+        padding: 6px 8px;
+        border-radius: 10px;
+        border: 1px solid var(--hh-stroke);
+        background: var(--hh-glass);
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+      }
+      @media (max-width: 1000px) {
+        .wrap,
+        .cards {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="cards">
+        <div id="wide"></div>
+        <div id="narrow"></div>
+      </div>
+      <div class="controls" id="controls"></div>
+    </div>
+    <script type="module" src="./island.ts"></script>
+  </body>
+</html>
