@@ -52,6 +52,14 @@ export const base = css`
   .num {
     font-variant-numeric: tabular-nums;
   }
+  /* Size the icon box to the glyph, not to a line of text: otherwise iOS Safari gives it the parent's
+     line height and the glyph sits high inside a centred chip. */
+  ha-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 0;
+  }
   .muted {
     color: var(--hh-ink-2);
   }

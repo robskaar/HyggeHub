@@ -393,6 +393,12 @@ export class IslandScene {
   private running = false;
   private time = 0;
   private framing = new Sphere(new Vector3(), 8);
+  /** Zooming in on one spot while the card shows its details beside it. */
+  private focusPoint = new Vector3();
+  private focusOn = false;
+  private focusEase = 0;
+  private focusSide: 'right' | 'bottom' = 'right';
+  private settle = 0;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -578,7 +584,7 @@ export class IslandScene {
       this.root.add(mesh);
       return mesh;
     };
-    return { key, core: make(0.04, false), halo: make(0.18, true), phase: Math.random() };
+    return { key, core: make(0.04, false), halo: make(0.12, true), phase: Math.random() };
   }
 
   private buildWeather() {
@@ -839,6 +845,47 @@ export class IslandScene {
     this.tick(0, true);
   }
 
+  /**
+   * Zooms in on a label's spot (null zooms back out). `side` is where the card puts its details: the
+   * view slides the other way, so the spot stays visible beside them.
+   */
+  focus(key: LabelKey | null, side: 'right' | 'bottom' = 'right') {
+    const node = key ? this.anchors.get(key) : undefined;
+    if (node) {
+      // Aim at the thing itself, not at the label floating beside it: the bins and the car by their own
+      // positions, anything else a little below its label.
+      const car = this.model?.getObjectByName('car');
+      if (key === 'bins' && this.bins.length) {
+        this.focusPoint.set(0, 0, 0);
+        this.bins.forEach(b => this.focusPoint.add(b.node.getWorldPosition(new Vector3())));
+        this.focusPoint.divideScalar(this.bins.length).setY(0.6);
+      } else if (key === 'car' && car?.visible) {
+        car.getWorldPosition(this.focusPoint).setY(0.6);
+      } else {
+        node.getWorldPosition(this.focusPoint);
+        this.focusPoint.y = Math.max(0.5, this.focusPoint.y - 1.4);
+      }
+    }
+    this.focusOn = !!node;
+    this.focusSide = side;
+    if (!this.running) this.animateFor(1.2);
+  }
+
+  /** Runs frames for a while without motion, so a zoom still eases when animations are paused. */
+  private animateFor(seconds: number) {
+    this.settle = seconds;
+    let last = performance.now();
+    const step = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      this.settle -= dt;
+      if (this.running) return;
+      this.tick(dt, false, true);
+      if (this.settle > 0) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
   resize(width: number, height: number) {
     if (width < 1 || height < 1) return;
     this.width = width;
@@ -861,10 +908,11 @@ export class IslandScene {
   }
   private camDistance = 40;
 
-  private tick(dt: number, still = false) {
+  /** `cameraOnly`: a frame that moves the camera (a zoom easing in) while everything else stands still. */
+  private tick(dt: number, still = false, cameraOnly = false) {
     const s = this.state;
     if (!s || !this.model) return;
-    const motion = s.motion && !still;
+    const motion = s.motion && !still && !cameraOnly;
     if (motion) this.time += dt;
     const t = this.time;
     const e = this.eased;
@@ -891,11 +939,20 @@ export class IslandScene {
       this.yawVelocity *= Math.exp(-dt * 4);
       if (performance.now() - this.lastDrag > 2500) this.yaw += (0 - this.yaw) * (1 - Math.exp(-dt * 1.2));
     }
+    // Zoom: ease towards the focused spot and closer in, and slide the picture aside for the details.
+    this.focusEase += ((this.focusOn ? 1 : 0) - this.focusEase) * (still && !cameraOnly ? 1 : 1 - Math.exp(-dt * 4));
+    const f = this.focusEase;
     const az = MathUtils.degToRad(34) + this.yaw;
-    const el = MathUtils.degToRad(27);
-    const c = this.framing.center;
-    this.camera.position.set(c.x + Math.sin(az) * Math.cos(el) * this.camDistance, c.y + Math.sin(el) * this.camDistance, c.z + Math.cos(az) * Math.cos(el) * this.camDistance);
+    const el = MathUtils.degToRad(27 + f * 4);
+    const c = this.framing.center.clone().lerp(this.focusPoint, f);
+    const dist = this.camDistance * (1 - 0.5 * f);
+    this.camera.position.set(c.x + Math.sin(az) * Math.cos(el) * dist, c.y + Math.sin(el) * dist, c.z + Math.cos(az) * Math.cos(el) * dist);
     this.camera.lookAt(c);
+    if (f > 0.001) {
+      const w = this.width, h = this.height;
+      if (this.focusSide === 'right') this.camera.setViewOffset(w, h, w * 0.24 * f, 0, w, h);
+      else this.camera.setViewOffset(w, h, 0, h * 0.26 * f, w, h);
+    } else if (this.camera.view) this.camera.clearViewOffset();
 
     // Each bin rolls to the kerb for its own collection, and back afterwards.
     this.bins.forEach((b, i) => b.node.position.lerp(s.bins?.[i]?.out ? b.out : b.home, still ? 1 : 1 - Math.exp(-dt * 1.8)));
@@ -937,7 +994,7 @@ export class IslandScene {
     if (this.windowMat) this.windowMat.emissiveIntensity = glow * 2.2;
     if (this.lampMat) this.lampMat.emissiveIntensity = glow * 3;
     // The wallbox light breathes while charging.
-    if (this.ledMat) this.ledMat.emissiveIntensity = s.car?.charging && motion ? 0.9 + Math.sin(t * 3) * 0.5 : 0.6;
+    if (this.ledMat) this.ledMat.emissiveIntensity = s.car?.charging && motion ? 0.9 + Math.sin(t * 1.2) * 0.45 : 0.6;
     for (const l of this.nightLights) l.light.intensity = l.max * MathUtils.clamp((n - 0.3) / 0.5, 0, 1);
     if (this.driveMat) this.driveMat.emissiveIntensity = e.drive * 3;
     for (const g of this.glows) g.material.uniforms.uAmount.value = e.drive * (0.25 + n * 0.75);
@@ -963,8 +1020,10 @@ export class IslandScene {
 
     // Flow lines.
     for (const f of this.flows) {
+      // One lap of the mark takes at least 1.6 s, so short lines (the charge cable) don't flicker past.
       const v = Math.abs(f.core.material.uniforms.uSpeed.value);
-      if (motion) f.phase = (f.phase + (dt * v) / f.core.material.uniforms.uLength.value) % 1;
+      const lap = v > 0 ? Math.max(1.6, f.core.material.uniforms.uLength.value / v) : Infinity;
+      if (motion) f.phase = (f.phase + dt / lap) % 1;
       for (const m of [f.core.material, f.halo.material]) {
         m.uniforms.uPhase.value = f.phase;
         m.uniforms.uNight.value = n;

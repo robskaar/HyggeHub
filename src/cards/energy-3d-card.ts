@@ -1,5 +1,6 @@
 import { css, html, nothing, type PropertyValues } from 'lit';
 import { state } from 'lit/decorators.js';
+import { classMap } from 'lit/directives/class-map.js';
 import { registerCard, HyggeCard } from '../shared/base-card';
 import { compartments, daysFromToday, kindsIn, pickups, type BinsSource, type Kind } from '../shared/bins';
 import { haIcon } from '../shared/icons';
@@ -131,6 +132,24 @@ function weatherFrom(e?: HassEntity): Weather {
   return w;
 }
 
+const WEATHER_ICONS: Record<string, string> = {
+  'clear-night': 'mdi:weather-night',
+  cloudy: 'mdi:weather-cloudy',
+  exceptional: 'mdi:alert-circle-outline',
+  fog: 'mdi:weather-fog',
+  hail: 'mdi:weather-hail',
+  lightning: 'mdi:weather-lightning',
+  'lightning-rainy': 'mdi:weather-lightning-rainy',
+  partlycloudy: 'mdi:weather-partly-cloudy',
+  pouring: 'mdi:weather-pouring',
+  rainy: 'mdi:weather-rainy',
+  snowy: 'mdi:weather-snowy',
+  'snowy-rainy': 'mdi:weather-snowy-rainy',
+  sunny: 'mdi:weather-sunny',
+  windy: 'mdi:weather-windy',
+  'windy-variant': 'mdi:weather-windy-variant',
+};
+
 /** HA reports wind bearing as degrees, or as a compass point on some integrations. */
 const POINTS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
 function bearing(v: unknown): number | undefined {
@@ -161,6 +180,9 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
   /** The newest hour of meter readings, when the card reads meters instead of live sensors. */
   @state() private meters?: { energy?: MeterHour; water?: WaterHour };
   private metersFor?: string;
+  /** The label whose details are open over the scene. */
+  @state() private detail?: LabelKey;
+  private compact = false;
   private meterTicker?: number;
 
   protected override validateConfig(c: Energy3dCardConfig) {
@@ -292,7 +314,7 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
       out.push({
         key: 'car',
         value: r.car.soc !== undefined ? `${Math.round(r.car.soc)}%` : name,
-        caption: r.car.charging ? (r.car.kw ? `Charging ${watts(r.car.kw)}` : 'Charging') : r.car.plugged ? 'Plugged in' : name,
+        caption: r.car.charging ? (r.car.kw ? `Charging ${watts(r.car.kw)}` : 'Charging') : r.car.plugged ? 'Plugged in' : r.car.soc !== undefined ? name : 'Parked',
         entity: c.car?.battery ?? c.car?.charging,
         icon: ICONS.car,
         color: r.car.charging ? 'var(--hh-ok)' : 'var(--hh-ink-2)',
@@ -422,10 +444,27 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
       const n = next ? daysFromToday(next.day) : -1;
       return {
         colors: [colors[0], colors[1] ?? colors[0]],
-        // Out the evening before and through the morning of collection day.
-        out: (n === 1 && new Date().getHours() >= 17) || (n === 0 && new Date().getHours() < 14),
+        // Out at the kerb on collection day, all day.
+        out: n === 0,
       };
     });
+  }
+
+  /** Temperature and wind from the weather entity, with an arrow pointing where the wind blows. */
+  private weatherChip() {
+    const e = this.stateOf(this.weatherId());
+    if (!e) return nothing;
+    const temp = Number(e.attributes.temperature);
+    const w = weatherFrom(e);
+    const unit = String(e.attributes.temperature_unit ?? '°');
+    return html`<button type="button" class="weather" @click=${() => this.moreInfo(e.entity_id)}>
+      ${haIcon(WEATHER_ICONS[e.state] ?? 'mdi:weather-partly-cloudy')}
+      ${isFinite(temp) ? html`<b class="num">${Math.round(temp)}${unit.startsWith('°') ? '°' : ` ${unit}`}</b>` : nothing}
+      <span class="num">${Math.round(w.wind)} m/s</span>
+      ${w.windBearing !== undefined
+        ? html`<svg class="i wind" viewBox="0 0 24 24" style="transform:rotate(${w.windBearing + 180}deg)" aria-label="from ${Math.round(w.windBearing)}°"><path d="M12 19V5M6 11l6-6 6 6"></path></svg>`
+        : nothing}
+    </button>`;
   }
 
   private pushState() {
@@ -449,7 +488,8 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
       const stage = canvas.parentElement!;
       this.resizer = new ResizeObserver(() => {
         // Narrow cards (phones, a third of a tablet) drop the captions so the labels cover less of the scene.
-        stage.classList.toggle('compact', stage.clientWidth < 440);
+        this.compact = stage.clientWidth < 440;
+        stage.classList.toggle('compact', this.compact);
         this.island?.resize(stage.clientWidth, stage.clientHeight);
       });
       this.resizer.observe(stage);
@@ -487,6 +527,100 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
     this.requestUpdate();
   }
 
+  // ---------- details ----------
+
+  private openDetail(key: LabelKey) {
+    this.detail = key;
+    this.island?.focus(key, this.compact ? 'bottom' : 'right');
+  }
+
+  private closeDetail() {
+    this.detail = undefined;
+    this.island?.focus(null);
+  }
+
+  private detailPanel(key: LabelKey) {
+    const label = this.labels().find(l => l.key === key);
+    const body = this.detailBody(key);
+    if (!label) return nothing;
+    const titles: Record<LabelKey, string> = { grid: 'Grid', solar: 'Solar', car: this.config.car?.name ?? 'Car', home: 'Home', water: 'Water', bins: 'Bins' };
+    return html`<div class="panel" role="dialog" aria-label=${titles[key]} @keydown=${(e: KeyboardEvent) => e.key === 'Escape' && this.closeDetail()}>
+      <div class="panel-h">
+        <button type="button" class="back" @click=${() => this.closeDetail()}>
+          <svg viewBox="0 0 24 24" class="i"><path d="M15 6l-6 6 6 6"></path></svg>Back
+        </button>
+        <span class="ic" style="color:${label.color}"><svg viewBox="0 0 24 24" class="i"><path d=${label.icon}></path></svg></span>
+        <h4>${titles[key]}</h4>
+      </div>
+      <div class="panel-b">${body}</div>
+    </div>`;
+  }
+
+  private detailBody(key: LabelKey) {
+    const c = this.config;
+    const r = this.readings();
+    const e = c.grid ? undefined : this.meters?.energy;
+    const kwh = (v?: number) => (v === undefined ? '–' : `${v.toFixed(v < 10 ? 2 : 1)} kWh`);
+    const row = (name: string, value: unknown) => html`<div class="row"><span>${name}</span><b class="num">${value}</b></div>`;
+    const when = r.metered && r.energyHour ? `Hour ${hourSpan(r.energyHour)}` : 'Now';
+    const share = r.home !== undefined && r.home > 0 ? Math.round(Math.max(0, Math.min(1, 1 - Math.max(r.grid, 0) / r.home)) * 100) : undefined;
+    const history = (entity?: string) => (entity ? html`<button type="button" class="more" @click=${() => this.moreInfo(entity)}>History and settings</button>` : nothing);
+    const metered = r.metered ? html`<p class="note">From the meters, which report a few hours late: the newest hour with readings, as an average.</p>` : nothing;
+
+    switch (key) {
+      case 'grid':
+        return html`${row(when, `${watts(r.grid)} ${r.grid < -0.02 ? 'out' : 'in'}`)}
+          ${e ? html`${row('Bought', kwh(e.bought))}${c.grid_export_meter ? row('Sold', kwh(e.sold)) : nothing}` : nothing}
+          ${metered}${history(c.grid ?? c.grid_meter)}`;
+      case 'solar':
+        return html`${row(when, watts(r.solar))}
+          ${e?.solar !== undefined ? row('Produced', kwh(e.solar)) : nothing}
+          ${share !== undefined ? row('Own power used', `${share}%`) : nothing}
+          ${metered}${history(c.solar ?? c.solar_meter)}`;
+      case 'home':
+        return html`${row(when, watts(r.home ?? 0))}
+          ${share !== undefined ? row('Self-sufficient', `${share}%`) : nothing}
+          ${row('From the grid', watts(Math.max(0, r.grid)))}
+          ${c.solar || c.solar_meter ? row('From solar', watts(Math.max(0, Math.min(r.solar, r.home ?? 0)))) : nothing}
+          ${metered}${history(c.home)}`;
+      case 'water':
+        return html`${r.metered || !c.water
+          ? row(r.waterHour ? `Hour ${hourSpan(r.waterHour)}` : 'Last hour', r.water !== undefined ? `${Math.round(r.water * 60)} L` : '–')
+          : row('Now', r.water !== undefined ? `${r.water.toFixed(1)} L/min` : '–')}
+          ${history(c.water ?? c.water_meter)}`;
+      case 'car': {
+        const car = r.car;
+        const cc = c.car ?? {};
+        if (!car || (car.soc === undefined && !cc.charging && !cc.plugged))
+          return html`<p class="note">Parked. Add <code>battery</code>, <code>charging</code>, <code>charging_power</code> and <code>plugged</code> under <code>car:</code> to see the battery and charging here.</p>`;
+        return html`${car.soc !== undefined ? row('Battery', `${Math.round(car.soc)}%`) : nothing}
+          ${row('Status', car.charging ? 'Charging' : car.plugged ? 'Plugged in' : 'Not plugged in')}
+          ${car.charging && car.kw ? row('Charging at', watts(car.kw)) : nothing}
+          ${history(cc.battery ?? cc.charging)}`;
+      }
+      case 'bins': {
+        const all = c.bins?.schedule?.length ? pickups(c.bins).slice(0, 6) : [];
+        const day = (d: Date) => {
+          const n = daysFromToday(d);
+          return n === 0 ? 'Today' : n === 1 ? 'Tomorrow' : d.toLocaleDateString(lang(this.hass), { weekday: 'long', day: 'numeric', month: 'short' });
+        };
+        return html`<ul class="pickups">
+          ${all.map(
+            p => html`<li>
+              <div class="when"><b>${day(p.day)}</b><small class="num">${daysFromToday(p.day) > 1 ? `in ${daysFromToday(p.day)} days` : ''}</small></div>
+              ${p.bins.map(
+                b => html`<div class="bin">
+                  <span class="kinds">${b.kinds.map(k => html`<span class="kind" style="--c:${k.color}" title=${k.name}>${haIcon(k.icon)}</span>`)}</span>
+                  <span>${b.name}</span>
+                </div>`,
+              )}
+            </li>`,
+          )}
+        </ul>`;
+      }
+    }
+  }
+
   private placeLabels(labels: LabelPosition[]) {
     for (const l of labels) {
       const el = this.renderRoot.querySelector<HTMLElement>(`.tag[data-key="${l.key}"]`);
@@ -506,11 +640,11 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
     const labels = this.labels();
     return html`
       <ha-card class="glass">
-        <div class="stage" style="height:${c.height ?? 340}px">
+        <div class=${classMap({ stage: true, focused: !!this.detail })} style="height:${c.height ?? 340}px">
           <canvas role="img" aria-label=${labels.map(l => `${l.caption} ${l.value}`).join(', ')}></canvas>
           <div class="loading" aria-hidden="true"></div>
           ${labels.map(
-            l => html`<button type="button" class="tag" data-key=${l.key} @click=${() => this.moreInfo(l.entity)} ?disabled=${!l.entity}>
+            l => html`<button type="button" class="tag" data-key=${l.key} @click=${() => this.openDetail(l.key)} aria-haspopup="dialog">
               <span class="ic" style="color:${l.color}"><svg viewBox="0 0 24 24" class="i"><path d=${l.icon}></path></svg></span>
               <span class="txt"><b class="num">${l.value}</b><small>${l.caption}</small></span>
               ${l.kinds?.length
@@ -518,10 +652,18 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
                 : nothing}
             </button>`,
           )}
+          ${this.detail ? this.detailPanel(this.detail) : nothing}
         </div>
         <div class="card-h overlay">
-          <h3>${c.title ?? 'Energy'}</h3>
-          ${selfShare !== undefined ? html`<span class="pill"><span class="dot"></span>Self-sufficient ${selfShare}%</span>` : nothing}
+          <div class="title">
+            <h3>${c.title ?? 'Energy'}</h3>
+            ${this.weatherChip()}
+          </div>
+          ${r.metered
+            ? html`<span class="pill">${selfShare !== undefined ? html`<span class="dot"></span>${selfShare}% own · ` : nothing}${r.energyHour ? hourSpan(r.energyHour) : 'Reading meters…'}</span>`
+            : selfShare !== undefined
+              ? html`<span class="pill"><span class="dot"></span>Self-sufficient ${selfShare}%</span>`
+              : nothing}
         </div>
         ${c.extras?.length
           ? html`<div class="extras num" style="grid-template-columns:repeat(${Math.min(3, c.extras.length)},1fr)">
@@ -584,8 +726,40 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
         right: 18px;
         pointer-events: none;
       }
-      .overlay .pill {
+      .overlay .pill,
+      .overlay .weather {
         pointer-events: auto;
+      }
+      .overlay {
+        align-items: flex-start;
+      }
+      .title {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-width: 0;
+      }
+      .weather {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        align-self: flex-start;
+        padding: 4px 10px 4px 8px;
+        border-radius: 999px;
+        background: var(--hh-glass-strong);
+        border: 1px solid var(--hh-stroke);
+        font-size: 12px;
+        color: var(--hh-ink-2);
+        --mdc-icon-size: 16px;
+      }
+      .weather b {
+        font-weight: 600;
+        color: var(--hh-ink);
+      }
+      .weather svg.wind {
+        width: 14px;
+        height: 14px;
+        transition: transform 0.6s var(--ease);
       }
       .pill .dot {
         width: 7px;
@@ -670,6 +844,147 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
         width: 18px;
         height: 18px;
         --mdc-icon-size: 11px;
+      }
+      /* While details are open the labels step aside; the scene zooms in beside the panel. */
+      .focused .tag {
+        opacity: 0 !important;
+        pointer-events: none;
+      }
+      .panel {
+        position: absolute;
+        top: 60px;
+        right: 12px;
+        bottom: 12px;
+        width: min(48%, 320px);
+        display: flex;
+        flex-direction: column;
+        border-radius: 20px;
+        background: color-mix(in srgb, var(--hh-glass-strong) 82%, transparent);
+        -webkit-backdrop-filter: blur(18px) saturate(160%);
+        backdrop-filter: blur(18px) saturate(160%);
+        border: 1px solid var(--hh-stroke);
+        box-shadow: var(--hh-shadow);
+        overflow: hidden;
+        animation: panel-in 0.4s var(--ease) both;
+        z-index: 2;
+      }
+      .compact .panel {
+        top: auto;
+        left: 10px;
+        right: 10px;
+        bottom: 10px;
+        width: auto;
+        height: 56%;
+        animation-name: panel-up;
+      }
+      @keyframes panel-in {
+        from {
+          opacity: 0;
+          transform: translateX(16px);
+        }
+      }
+      @keyframes panel-up {
+        from {
+          opacity: 0;
+          transform: translateY(16px);
+        }
+      }
+      .panel-h {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px 8px 8px;
+        border-bottom: 1px solid var(--hh-line);
+      }
+      .panel-h h4 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .back {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        padding: 5px 10px 5px 4px;
+        border-radius: 999px;
+        font-size: 12.5px;
+        font-weight: 600;
+        color: var(--hh-accent);
+      }
+      .back:hover {
+        background: var(--hh-accent-soft);
+      }
+      .back svg.i {
+        width: 16px;
+        height: 16px;
+      }
+      .panel-b {
+        padding: 6px 14px 14px;
+        overflow-y: auto;
+        font-size: 13px;
+      }
+      .row {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 10px;
+        padding: 7px 0;
+        border-bottom: 1px solid var(--hh-line);
+      }
+      .row span {
+        color: var(--hh-ink-2);
+      }
+      .row b {
+        font-weight: 600;
+      }
+      .note {
+        margin: 10px 0 0;
+        font-size: 12px;
+        color: var(--hh-ink-3);
+        line-height: 1.4;
+      }
+      .note code {
+        font-size: 11px;
+      }
+      .more {
+        margin-top: 12px;
+        font-size: 12.5px;
+        font-weight: 600;
+        color: var(--hh-accent);
+        padding: 6px 0;
+      }
+      .pickups {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .pickups li {
+        padding: 9px 0;
+        border-bottom: 1px solid var(--hh-line);
+        display: grid;
+        gap: 6px;
+      }
+      .pickups .when {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+      }
+      .pickups .when b {
+        font-weight: 600;
+      }
+      .pickups .when small {
+        font-size: 11.5px;
+        color: var(--hh-ink-3);
+      }
+      .pickups .bin {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12.5px;
+        color: var(--hh-ink-2);
+      }
+      .pickups .kinds {
+        margin: 0;
       }
       .compact .tag {
         padding-right: 9px;

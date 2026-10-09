@@ -26,6 +26,9 @@ export interface MeterHour {
   solar?: number;
   /** Home use, average kW: bought + produced − sold. Only when every configured electricity meter has the hour. */
   home?: number;
+  /** The hour's kWh bought and sold, as read. */
+  bought?: number;
+  sold?: number;
 }
 
 export interface WaterHour {
@@ -74,7 +77,15 @@ export async function readMeters(hass: HomeAssistant, ids: MeterIds): Promise<{ 
   };
 
   const out: { energy?: MeterHour; water?: WaterHour } = {};
-  const anchor = newest(ids.grid) ?? newest(ids.gridExport) ?? newest(ids.solar);
+  // Meters can lag by different amounts (a production metering point often reports later than the main
+  // meter). Imported statistics, as from Målerportal, only have rows up to the last hour reported, so use
+  // the newest hour every configured electricity meter has a row for; then the numbers add up. Sold and
+  // produced are zero at night, so "has a row" is the test, not "has a change".
+  const energyIds = [ids.grid, ids.gridExport, ids.solar].filter((x): x is string => !!x);
+  const lastRow = (id: string) => rows(id)[rows(id).length - 1];
+  const upTo = Math.min(...energyIds.map(id => (lastRow(id) ? t(lastRow(id).start) : Infinity)));
+  const common = ids.grid ? [...rows(ids.grid)].reverse().find(r => (r.change ?? 0) !== 0 && t(r.start) <= upTo) : undefined;
+  const anchor = common ?? newest(ids.grid) ?? newest(ids.gridExport) ?? newest(ids.solar);
   if (anchor) {
     const bought = at(ids.grid, anchor);
     const sold = at(ids.gridExport, anchor);
@@ -87,6 +98,8 @@ export async function readMeters(hass: HomeAssistant, ids: MeterIds): Promise<{ 
       grid: ids.grid || ids.gridExport ? (bought ?? 0) - (sold ?? 0) : undefined,
       solar: ids.solar ? (made ?? 0) : undefined,
       home: ids.grid && complete ? Math.max(0, (bought ?? 0) + (made ?? 0) - (sold ?? 0)) : undefined,
+      bought,
+      sold,
     };
   }
   const w = newest(ids.water);

@@ -241,7 +241,9 @@ function windowAt(face, u, v, w, h) {
   // face: 'front' (z = HZ1) or 'side' (x = HX). u is the along-wall centre, v the centre height.
   const at = (du, dv, dn) => (face === 'front' ? [u + du, v + dv, HZ1 + dn] : [HX + dn, v + dv, u + du]);
   const rot = face === 'front' ? [0, 0, 0] : [0, Math.PI / 2, 0];
-  glass.add(rbox(w, h, 0.04, 0.015), M.window, at(0, 0, 0.02), rot);
+  // The wall's bevel puts its surface 0.04 out; the pane sits clearly in front of it, or the two fight
+  // for the same depth and flicker as the view moves.
+  glass.add(rbox(w, h, 0.04, 0.015), M.window, at(0, 0, 0.055), rot);
   const t = 0.08;
   house.add(rbox(w + t * 2, t, 0.1, 0.035), M.trim, at(0, h / 2 + t / 2, 0.04), rot);
   house.add(rbox(w + t * 3, t * 1.2, 0.18, 0.04), M.trim, at(0, -h / 2 - t / 2, 0.07), rot);
@@ -386,7 +388,8 @@ const DRIVE = { x: CAR.x, w: 1.9, z0: CAR.z - 1.6 };
     lights.add(rbox(0.13, 0.1, 0.13, 0.03), M.driveLight, [bx, 0.54, z]);
     const glow = new THREE.Object3D();
     glow.name = `glow_drive_${i}`;
-    glow.position.set(bx - 0.15, 0.06, z);
+    // Above the sidewalk's top (0.06) and the kerb, so the pool of light never shares their depth.
+    glow.position.set(bx - 0.15, 0.11, z);
     glow.userData = { glow: { radius: 0.95, color: '#ffc983' } };
     island.add(glow);
   }
@@ -566,7 +569,8 @@ const flow = (key, pts) => {
   const mesh = new THREE.Mesh(prep(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(cable), 20, 0.024, 6), true), M.wire);
   mesh.name = 'charge_cable';
   island.add(mesh);
-  flow('car', [...cable.map(p => p.clone().add(v(0, 0.045, 0))), v(HX + 0.06, WALLBOX.y + 0.3, WALLBOX.z), v(HX + 0.06, 1.97, WALLBOX.z), v(HX + 0.06, 1.97, F), v(-0.55, 1.97, F), v(-0.55, 0.86, F)]);
+  // Ends at the wallbox: following the front wall to the meter put it right beside the solar line.
+  flow('car', [...cable.map(p => p.clone().add(v(0, 0.045, 0))), v(HX + 0.06, WALLBOX.y + 0.3, WALLBOX.z)]);
 }
 flow('water', [v(METER.x, 0.64, METER.z), v(METER.x, 0.04, METER.z - 0.2), v(1.7, 0.04, 1.3), v(1.7, 0.04, F), v(1.7, 0.36, F)]);
 

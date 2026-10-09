@@ -248,3 +248,11 @@ location.hash
   .split(/(?=#)/)
   .filter(Boolean)
   .forEach(k => presets[k]?.());
+
+// Dev-only: #open-bins, #open-grid... taps that label on every card once the scene has loaded, for
+// screenshots of the details overlay.
+const open = /#open-(\w+)/.exec(location.hash)?.[1];
+if (open)
+  setTimeout(() => {
+    document.querySelectorAll('hyggehub-energy-3d-card').forEach(card => card.shadowRoot?.querySelector<HTMLButtonElement>(`.tag[data-key="${open}"]`)?.click());
+  }, 3500);
