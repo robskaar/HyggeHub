@@ -348,6 +348,12 @@ if (chip)
       card.shadowRoot?.querySelectorAll<HTMLButtonElement>('.summary button, .dots button')[Number(chip)]?.click(),
     );
   }, 3500);
+// Dev-only: #timeline opens the countdowns as a timeline (the view is remembered, so set it either way).
+try {
+  localStorage.setItem('hyggehub-countdowns-view', location.hash.includes('timeline') ? 'timeline' : 'world');
+} catch {
+  /* ignore */
+}
 // Dev-only: #still turns animation off (as the Appearance panel's motion switch does), so screenshots
 // show each scene in its settled state instead of mid-bounce.
 if (location.hash.includes('still')) {

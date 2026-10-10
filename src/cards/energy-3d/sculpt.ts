@@ -207,6 +207,30 @@ export class Sculpt {
     return d;
   }
 
+  /**
+   * Where a ray from `p` straight back (towards -z) meets the surface, lifted `lift` off it along the
+   * normal: for placing eyes on a face, or drawing a smile or a brow onto it.
+   */
+  onSurface(p: V3, lift = 0): V3 {
+    const [x, y] = p;
+    let z = p[2];
+    for (let i = 0; i < 200; i++) {
+      const d = this.dist(x, y, z);
+      if (d < 1e-5) break;
+      z -= Math.max(d, 1e-4);
+    }
+    const e = 1e-4;
+    const d = this.dist(x, y, z);
+    let gx = this.dist(x + e, y, z) - d;
+    let gy = this.dist(x, y + e, z) - d;
+    let gz = this.dist(x, y, z + e) - d;
+    const g = Math.hypot(gx, gy, gz) || 1;
+    gx /= g;
+    gy /= g;
+    gz /= g;
+    return [x + gx * lift, y + gy * lift, z + gz * lift];
+  }
+
   /** The colour at a point on the surface. */
   colour(x: number, y: number, z: number): V3 {
     let d = 1e9;
@@ -406,4 +430,9 @@ export function sculpted(key: string, cell: number, build: () => Sculpt) {
     made.set(key, g);
   }
   return g;
+}
+
+/** `s` with `t` taken out of it: a crescent from two ellipses. */
+export function minus(s: Shape, t: Shape, soft = 0): Shape {
+  return { d: (x, y, z) => smax(s.d(x, y, z), -t.d(x, y, z), soft), c: s.c, r: s.r };
 }

@@ -1,9 +1,10 @@
-// The figurines, sculpted: a head with skull, cheeks, chin, nose and ears in one piece of clay, the
-// hair and beard modelled as masses over it and an open grin carved in; a body with legs, hips, chest
-// and shoulders melted together and the clothes painted on; arms that bend at the elbow, with hands.
-// Eyes stay separate glossy parts so they can blink. See sculpt.ts for how the clay works.
+// The figurines, sculpted the way a figurine maker would: a head with cranium, cheeks, chin, button
+// nose and ears in one piece of clay, eye sockets and a smile carved in; hair and beard as pieces of
+// their own laid over it; a body with legs, hips, chest and shoulders melted together and the clothes
+// painted on; arms that bend at the elbow, with hands. The eyeballs, brows and a closed smile are
+// separate smooth parts (see people.ts) so the eyes can look round and blink. See sculpt.ts for the clay.
 import type { BufferGeometry } from 'three';
-import { chain, clip, cone, ellipsoid, intersect, roundBox, Sculpt, sculpted, shell, sphere, torus, union, type V3 } from './sculpt';
+import { chain, clip, cone, ellipsoid, intersect, minus, roundBox, Sculpt, sculpted, shell, sphere, torus, union, type V3 } from './sculpt';
 import type { FigureState, Interest } from './people';
 
 const mix = (a: string, b: string, t: number) => {
@@ -20,107 +21,180 @@ export const BODY = {
   child: { headR: 0.31, legH: 0.22, torsoH: 0.3, torsoW: 0.16, limb: 0.06, armL: 0.28, pants: '#4a6a8a', shoes: '#f4f1ea', sleeves: 'short' },
 } as const;
 
-const MOUTH = '#5a2323';
-const TEETH = '#fbf8f4';
-const TONGUE = '#e8838a';
-const BLUSH = '#ef9a8a';
+const MOUTH = '#6b2a2a';
+const TONGUE = '#ec8f95';
+const BLUSH = '#f2998a';
 
 const key = (what: string, p: FigureState, extra: unknown = '') => [what, p.preset, p.hair, p.hairStyle, p.beard, p.skin, p.shirt, p.interests.join('+'), extra].join('|');
 
-/** Where the eyes go on a head of radius R (the head's own coordinates). */
-export const eyeSpot = (R: number, side: number): V3 => [side * R * 0.36, -R * 0.03, R * 0.8];
+/**
+ * What makes each face its own: the shape of the jaw and cheeks, the size of the eyes and nose, where
+ * the eyes sit, and the smile. Big eyes set low and wide under a high forehead, a button nose and round
+ * cheeks read as cute; grown-ups get a longer jaw and smaller eyes than the children.
+ */
+const FACE = {
+  man: { jaw: [0.88, 0.62, 0.8], cheek: 0.33, chin: [0.3, 0.2, 0.3], nose: [0.12, 0.1, 0.11], noseY: -0.17, eye: 0.2, eyeX: 0.37, eyeY: -0.02, smile: 'open', mouthW: 0.22 },
+  woman: { jaw: [0.8, 0.6, 0.78], cheek: 0.33, chin: [0.22, 0.17, 0.26], nose: [0.09, 0.08, 0.09], noseY: -0.18, eye: 0.225, eyeX: 0.36, eyeY: -0.02, smile: 'closed', mouthW: 0.18 },
+  child: { jaw: [0.88, 0.58, 0.8], cheek: 0.38, chin: null, nose: [0.085, 0.07, 0.085], noseY: -0.2, eye: 0.24, eyeX: 0.37, eyeY: -0.07, smile: 'open', mouthW: 0.24 },
+  baby: { jaw: [0.95, 0.56, 0.82], cheek: 0.42, chin: null, nose: [0.08, 0.065, 0.08], noseY: -0.22, eye: 0.235, eyeX: 0.36, eyeY: -0.12, smile: 'small', mouthW: 0.14 },
+} as const;
 
-/** The head, hair and beard included, round its centre; R is the skull's radius. */
-export function headGeometry(p: FigureState, R: number): BufferGeometry {
-  return sculpted(key('head', p, R), R * 0.04, () => {
-    const s = new Sculpt();
-    const baby = p.preset === 'baby';
-    const woman = p.preset === 'woman';
-    const skin = p.skin;
-    const hair = p.hair;
-    const hairDark = mix(hair, '#000000', 0.3);
-    const r = (v: number) => v * R;
+export interface HeadParts {
+  skin: BufferGeometry;
+  hair?: BufferGeometry;
+  beard?: BufferGeometry;
+  /** Eye centres and their radius; the eyeballs sit in sockets carved for them. */
+  eyes: V3[];
+  eyeR: number;
+  /** Lines drawn on the face, as points on its surface: the brows, and a closed smile. */
+  brows: V3[][];
+  browR: number;
+  smile?: V3[];
+}
 
-    // Skull, a jaw and cheeks below it, a chin; all one piece.
-    const skull = ellipsoid([0, r(0.02), r(-0.03)], [r(1.0), r(0.97), r(0.95)]);
-    const jaw = ellipsoid([0, r(-0.34), r(0.12)], [r(baby ? 0.9 : 0.8), r(0.62), r(0.78)]);
-    s.add(skull, skin);
-    s.add(jaw, skin, r(0.2));
-    for (const side of [-1, 1]) s.add(sphere([side * r(0.46), r(-0.32), r(0.5)], r(baby ? 0.42 : 0.36)), skin, r(0.15));
-    if (!baby) s.add(ellipsoid([0, r(-0.68), r(0.42)], [r(woman ? 0.26 : 0.3), r(0.2), r(0.3)]), skin, r(0.15));
-    // A soft brow over the eyes.
-    if (!baby) s.add(ellipsoid([0, r(0.24), r(0.6)], [r(0.72), r(0.16), r(0.3)]), skin, r(0.18));
-    // Nose: a small rounded one (a button for the little ones).
-    s.add(ellipsoid([0, r(-0.13), r(0.9)], baby || p.preset === 'child' ? [r(0.09), r(0.07), r(0.09)] : [r(0.11), r(0.11), r(0.12)]), skin, r(0.08));
-    // Ears, with a hollow.
-    for (const side of [-1, 1]) {
-      s.add(ellipsoid([side * r(0.96), r(-0.1), r(-0.02)], [r(0.12), r(0.22), r(0.16)], [0, side * 0.35, 0]), skin, r(0.06));
-      s.sub(sphere([side * r(1.06), r(-0.1), r(0.03)], r(0.08)), r(0.03));
-    }
-    // Sockets the eyes sit in.
-    for (const side of [-1, 1]) {
-      const [x, y] = eyeSpot(R, side);
-      s.sub(ellipsoid([x, y, r(0.95)], [r(0.21), r(0.24), r(0.14)]), r(0.06));
-    }
+const heads = new Map<string, HeadParts>();
 
-    // Hair: a mass over the skull, cut at a hairline that drops towards the nape.
-    const hairline = (t: number, lift = 0) => clip(shell(skull, r(t)), [0, -1, 0.55], r(0.05 - lift), r(0.05));
-    const style = baby ? 'baby' : p.hairStyle;
-    if (style === 'buzz') {
-      // Clipper-short: a close layer, a neat line, sideburns down into the beard.
-      const buzz = mix(hair, skin, 0.12);
-      s.add(hairline(0.035), buzz, r(0.02));
-      for (const side of [-1, 1]) s.add(cone([side * r(0.9), r(0.12), r(0.1)], [side * r(0.88), r(-0.2), r(0.2)], r(0.07), r(0.06)), buzz, r(0.03));
-    } else if (style === 'short') {
-      // Thick, tousled: a full cap, clumps pointing out round the crown, a fringe falling forward.
-      s.add(hairline(0.1), hair, r(0.05));
-      const dirs: Array<[number, number]> = [];
-      for (let i = 0; i < 9; i++) dirs.push([0.55, (i / 9) * Math.PI * 2 + 0.3]);
-      for (let i = 0; i < 5; i++) dirs.push([0.2, (i / 5) * Math.PI * 2]);
-      dirs.forEach(([tilt, around], i) => {
-        const d: V3 = [Math.sin(tilt) * Math.sin(around), Math.cos(tilt), Math.sin(tilt) * Math.cos(around)];
-        if (d[2] > 0.35 && d[1] < 0.9) return; // not over the face
-        const base: V3 = [d[0] * r(0.8), d[1] * r(0.8) + r(0.02), d[2] * r(0.8) - r(0.03)];
-        const tip: V3 = [d[0] * r(1.3), d[1] * r(1.22) + r(0.02), d[2] * r(1.25) - r(0.12)];
-        s.add(cone(base, tip, r(0.26), r(0.07)), i % 2 ? hair : mix(hair, '#000000', 0.08), r(0.07));
-      });
-      for (const x of [-0.42, -0.14, 0.16, 0.44]) s.add(cone([r(x), r(0.72), r(0.45)], [r(x * 1.15), r(0.42), r(0.95)], r(0.17), r(0.06)), hair, r(0.06));
-    } else if (style === 'long') {
-      // A side-swept fringe, locks framing the face, and a long fall down the back to the shoulders.
-      s.add(hairline(0.09), hair, r(0.05));
-      s.add(ellipsoid([r(0.18), r(0.62), r(0.6)], [r(0.72), r(0.26), r(0.32)], [0.5, 0, -0.35]), hair, r(0.1));
-      s.add(ellipsoid([r(0.6), r(0.36), r(0.68)], [r(0.2), r(0.32), r(0.18)], [0.3, 0, -0.5]), hair, r(0.08));
-      s.add(clip(ellipsoid([0, r(-0.5), r(-0.42)], [r(0.98), r(1.1), r(0.58)]), [0, -1, 0], r(1.55), r(0.1)), hair, r(0.15));
-      for (const side of [-1, 1]) {
-        s.add(chain([[[side * r(0.86), r(0.4), r(0.32)], r(0.24)], [[side * r(1.0), r(-0.35), r(0.25)], r(0.25)], [[side * r(0.98), r(-1.25), r(0.12)], r(0.2)], [[side * r(0.86), r(-1.55), r(0.16)], r(0.12)]]), hair, r(0.1));
-      }
-      for (let k = -2; k <= 2; k++) s.add(sphere([k * r(0.34), r(-1.52), r(-0.25) - Math.abs(k) * r(0.05)], r(0.2)), hairDark, r(0.12));
-    } else if (style === 'baby') {
-      // A fine down of hair and a curl on top.
-      s.add(hairline(0.02, 0.15), mix(hair, skin, 0.25), r(0.02));
-      if (!p.interests.includes('cars')) s.add(torus([0, r(0.98), r(0.22)], r(0.12), r(0.05), [1.2, 0, 0.5]), hair, r(0.03));
-    }
+/** The head round its centre (R is the skull's radius): skin, hair and beard as separate pieces. */
+export function headParts(p: FigureState, R: number): HeadParts {
+  const k = key('head2', p, R);
+  let h = heads.get(k);
+  if (!h) {
+    h = buildHead(p, R);
+    heads.set(k, h);
+  }
+  return h;
+}
 
-    // Beard: a layer round the jaw and chin up into the sideburns, with a moustache.
-    if (p.beard && !baby) {
-      const beard = mix(hair, '#000000', 0.18);
-      const t = p.beard === 'full' ? 0.1 : 0.05;
-      const jawline = union(jaw, ellipsoid([0, r(-0.68), r(0.42)], [r(0.3), r(0.2), r(0.3)]));
-      s.add(clip(clip(shell(jawline, r(t)), [0, 1, 0.25], r(-0.12), r(0.06)), [0, 0, -1], r(0.1), r(0.05)), beard, r(0.03));
-      for (const side of [-1, 1]) s.add(cone([side * r(0.84), r(0.05), r(0.12)], [side * r(0.72), r(-0.35), r(0.42)], r(0.07), r(0.08)), beard, r(0.05));
-      s.add(chain([[[r(-0.3), r(-0.34), r(0.8)], r(0.045)], [[0, r(-0.27), r(0.96)], r(0.06)], [[r(0.3), r(-0.34), r(0.8)], r(0.045)]]), beard, r(0.03));
-    }
+function buildHead(p: FigureState, R: number): HeadParts {
+  const F = FACE[p.preset];
+  const baby = p.preset === 'baby';
+  const woman = p.preset === 'woman';
+  const r = (v: number) => v * R;
+  const skin = p.skin;
+  const s = new Sculpt();
 
-    // Blush.
-    for (const side of [-1, 1]) s.paint(sphere([side * r(0.56), r(-0.32), r(0.82)], r(0.12)), BLUSH, r(0.1));
+  // A big round cranium, cheeks and a jaw below it, a chin; one piece of clay.
+  const skull = ellipsoid([0, r(0.06), r(-0.04)], [r(1.0), r(0.98), r(0.96)]);
+  const jaw = ellipsoid([0, r(-0.36), r(0.1)], [r(F.jaw[0]), r(F.jaw[1]), r(F.jaw[2])]);
+  s.add(skull, skin);
+  s.add(jaw, skin, r(0.25));
+  for (const side of [-1, 1]) s.add(sphere([side * r(0.47), r(-0.36), r(0.46)], r(F.cheek)), skin, r(0.2));
+  if (F.chin) s.add(ellipsoid([0, r(-0.7), r(0.38)], [r(F.chin[0]), r(F.chin[1]), r(F.chin[2])]), skin, r(0.18));
+  // Ears, with a hollow.
+  for (const side of [-1, 1]) {
+    s.add(ellipsoid([side * r(0.95), r(-0.12), r(-0.04)], [r(0.13), r(0.22), r(0.17)], [0, side * 0.4, 0]), skin, r(0.06));
+    s.sub(sphere([side * r(1.05), r(-0.12), r(0.02)], r(0.08)), r(0.03));
+  }
+  const front = (x: number, y: number) => s.onSurface([r(x), r(y), r(1.6)]);
 
-    // The open grin: a D carved into the face, teeth along the top, a tongue at the bottom.
-    const grin = clip(ellipsoid([0, r(-0.38), r(0.92)], [r(baby ? 0.24 : 0.3), r(0.22), r(0.3)]), [0, 1, 0], r(-0.36), r(0.03));
-    s.sub(grin, r(0.03), MOUTH);
-    if (!baby) s.add(roundBox([0, r(-0.4), r(0.74)], [r(0.24), r(0.045), r(0.12)], r(0.02)), TEETH, 0);
-    s.add(ellipsoid([0, r(-0.55), r(0.72)], [r(0.17), r(0.07), r(0.16)]), TONGUE, r(0.02));
-    return s;
+  // A button nose, a little rosy at the tip.
+  const noseAt = front(0, F.noseY);
+  s.add(ellipsoid([0, noseAt[1], noseAt[2] + r(F.nose[2] * 0.25)], [r(F.nose[0]), r(F.nose[1]), r(F.nose[2])]), skin, r(0.08));
+  s.paint(sphere([0, noseAt[1], noseAt[2] + r(F.nose[2] * 1.2)], r(F.nose[0] * 0.9)), mix(skin, BLUSH, 0.35), r(0.08));
+  // Round rosy cheeks.
+  for (const side of [-1, 1]) s.paint(ellipsoid(front(side * 0.52, -0.32), [r(0.17), r(0.11), r(0.12)]), mix(skin, BLUSH, 0.7), r(0.1));
+
+  // Sockets for the eyeballs: the ball shows a little over half its front.
+  const eyeR = r(F.eye);
+  const eyes: V3[] = [-1, 1].map(side => {
+    const at = front(side * F.eyeX, F.eyeY);
+    return [at[0], at[1], at[2] - eyeR * 0.5] as V3;
   });
+  for (const c of eyes) s.sub(sphere(c, eyeR * 1.05), r(0.05));
+
+  // The mouth: an open smile carved as a crescent, the top edge curving up at the corners, with a
+  // tongue; or a closed smile, drawn as a line (see `smile`).
+  let smile: V3[] | undefined;
+  const mouthAt = front(0, F.smile === 'small' ? -0.45 : -0.42);
+  if (F.smile === 'closed') {
+    smile = [];
+    for (let i = 0; i <= 8; i++) {
+      const x = (i / 8 - 0.5) * 2 * F.mouthW;
+      smile.push(s.onSurface([r(x), r(-0.42 + 1.9 * x * x), r(1.6)], 0));
+    }
+  } else {
+    const w = F.mouthW;
+    const h = F.smile === 'small' ? 0.1 : p.preset === 'child' ? 0.17 : 0.15;
+    const [, my, mz] = mouthAt;
+    const lower = ellipsoid([0, my, mz], [r(w), r(h), r(0.32)]);
+    const upper = ellipsoid([0, my + r(h * 1.1), mz], [r(w * 1.55), r(h * 1.45), r(0.6)]);
+    s.sub(minus(lower, upper), r(0.03), MOUTH);
+    s.add(ellipsoid([0, my - r(h * 0.55), mz - r(0.1)], [r(w * 0.55), r(h * 0.4), r(0.12)]), TONGUE, r(0.03));
+  }
+
+  // Brows: arched, set just over the eyes, a little higher and finer for her, raised for the children.
+  const lift = woman ? 0.2 : p.preset === 'child' ? 0.19 : 0.16;
+  const brows = baby
+    ? []
+    : [-1, 1].map(side => {
+        const ey = F.eyeY + F.eye;
+        const pts: Array<[number, number]> = [
+          [0.14, ey + lift + 0.02],
+          [0.3, ey + lift + 0.06],
+          [0.46, ey + lift + 0.05],
+          [0.58, ey + lift - 0.01],
+        ];
+        return pts.map(([x, y]) => s.onSurface([side * r(x), r(y), r(1.6)], 0));
+      });
+
+  const skinGeo = s.mesh(R * 0.034);
+
+  // Hair, as its own piece over the skull: cut at a hairline that drops towards the nape.
+  const hairline = (t: number, high = 0) => clip(shell(skull, r(t)), [0, -1, 0.55], r(0.02 - high), r(0.05));
+  const style = baby ? 'baby' : p.hairStyle;
+  const hs = new Sculpt();
+  const hc = p.hair;
+  if (style === 'buzz') {
+    // Clipper-short: a close layer with a little more on top at the front, sideburns into the beard.
+    hs.add(clip(shell(skull, r(0.035)), [0, -1, 0.55], r(0.0), r(0.14)), hc);
+    for (const side of [-1, 1]) hs.add(cone([side * r(0.92), r(0.25), r(0.08)], [side * r(0.9), r(-0.14), r(0.14)], r(0.07), r(0.06)), hc, r(0.04));
+  } else if (style === 'short') {
+    // Thick and tousled, in soft chunky locks: a full cap, locks swept up and back round the crown,
+    // and a fringe falling forward and to the side.
+    hs.add(hairline(0.12), hc);
+    const crown: Array<[number, number, number]> = [
+      [-0.55, 0.75, -0.2], [0.55, 0.75, -0.2], [0, 0.95, -0.35], [-0.35, 0.95, 0.1], [0.35, 0.95, 0.1], [0, 1.0, 0.15], [-0.7, 0.45, -0.55], [0.7, 0.45, -0.55], [0, 0.6, -0.85],
+    ];
+    for (const [x, y, z] of crown) {
+      const n = Math.hypot(x, y, z);
+      hs.add(cone([r(x * 0.85), r(y * 0.85), r(z * 0.85)], [r((x / n) * 1.22 + x * 0.1), r((y / n) * 1.22), r((z / n) * 1.18 - 0.2)], r(0.24), r(0.1)), hc, r(0.1));
+    }
+    for (const x0 of [-0.52, -0.22, 0.08, 0.38]) {
+      hs.add(chain([[[r(x0), r(0.85), r(0.5)], r(0.2)], [[r(x0 + 0.12), r(0.66), r(0.86)], r(0.15)], [[r(x0 + 0.24), r(0.5), r(0.9)], r(0.08)]]), hc, r(0.08));
+    }
+  } else if (style === 'long') {
+    // A big side-swept fringe, locks framing the face down to the shoulders, a long fall down the back.
+    hs.add(hairline(0.1), hc);
+    hs.add(chain([[[r(-0.55), r(0.85), r(0.5)], r(0.24)], [[r(-0.05), r(0.66), r(0.88)], r(0.2)], [[r(0.42), r(0.48), r(0.84)], r(0.14)], [[r(0.72), r(0.2), r(0.6)], r(0.09)]]), hc, r(0.1));
+    hs.add(chain([[[r(-0.72), r(0.55), r(0.55)], r(0.16)], [[r(-0.86), r(0.15), r(0.5)], r(0.12)], [[r(-0.84), r(-0.15), r(0.5)], r(0.07)]]), hc, r(0.08));
+    for (const side of [-1, 1]) {
+      hs.add(chain([[[side * r(0.86), r(0.45), r(0.25)], r(0.26)], [[side * r(1.02), r(-0.4), r(0.15)], r(0.25)], [[side * r(0.98), r(-1.15), r(0.02)], r(0.21)], [[side * r(0.78), r(-1.5), r(0.12)], r(0.12)]]), hc, r(0.12));
+    }
+    hs.add(clip(ellipsoid([0, r(-0.45), r(-0.45)], [r(1.0), r(1.15), r(0.6)]), [0, -1, 0], r(1.4), r(0.1)), hc, r(0.15));
+    for (let i = -2; i <= 2; i++) hs.add(sphere([i * r(0.34), r(-1.42), r(-0.3) - Math.abs(i) * r(0.05)], r(0.2)), hc, r(0.14));
+  } else if (style === 'baby') {
+    // A fine down of hair and a curl on top (under the hard hat if there is one).
+    hs.add(hairline(0.025, 0.12), mix(hc, skin, 0.2));
+    if (!p.interests.includes('cars')) hs.add(torus([0, r(1.0), r(0.25)], r(0.13), r(0.055), [1.2, 0, 0.5]), hc, r(0.04));
+  }
+  const hair = style === 'bald' ? undefined : hs.mesh(R * 0.04);
+
+  // Beard: a close layer round the jaw and chin up into the sideburns, leaving the mouth clear, and a
+  // moustache over it.
+  let beard: BufferGeometry | undefined;
+  if (p.beard && !baby) {
+    const bs = new Sculpt();
+    const t = p.beard === 'full' ? 0.1 : 0.055;
+    const jawline = union(jaw, ellipsoid([0, r(-0.7), r(0.38)], [r(0.3), r(0.2), r(0.3)]));
+    bs.add(clip(clip(shell(jawline, r(t)), [0, 1, 0.3], r(-0.14), r(0.06)), [0, 0, -1], r(0.12), r(0.05)), hc);
+    for (const side of [-1, 1]) bs.add(cone([side * r(0.88), r(0.1), r(0.1)], [side * r(0.78), r(-0.3), r(0.36)], r(0.07), r(0.08)), hc, r(0.06));
+    const [, my, mz] = mouthAt;
+    bs.sub(ellipsoid([0, my + r(0.02), mz], [r(F.mouthW + 0.06), r(0.2), r(0.4)]), r(0.04));
+    bs.add(chain([[[r(-0.3), my + r(0.04), mz - r(0.12)], r(0.05)], [[r(-0.12), my + r(0.11), mz + r(0.02)], r(0.065)], [[r(0.12), my + r(0.11), mz + r(0.02)], r(0.065)], [[r(0.3), my + r(0.04), mz - r(0.12)], r(0.05)]]), hc, r(0.04));
+    beard = bs.mesh(R * 0.035);
+  }
+
+  return { skin: skinGeo, hair, beard, eyes, eyeR, brows, browR: r(woman ? 0.03 : p.preset === 'child' ? 0.036 : 0.042), smile };
 }
 
 interface Look {

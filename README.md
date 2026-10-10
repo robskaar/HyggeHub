@@ -23,7 +23,7 @@ A Nordic glass design system for Home Assistant: thirteen custom cards, six comp
 | `hyggehub-countdown-card` | A date, a weekly event, a timer, an `input_datetime` or a calendar entry |
 | `hyggehub-home-card` | The whole home in 3D behind tabs (house, people, countdowns), filling a panel view |
 | `hyggehub-people-3d-card` | The family as little clay figures: who is home, away or asleep, and what's next for them |
-| `hyggehub-countdowns-3d-card` | Each countdown as a floating island dressed for the occasion: beach, gift, mountains, Christmas |
+| `hyggehub-countdowns-3d-card` | Each countdown as a floating island dressed for the occasion: beach, gift, mountains, Christmas; or all of them on a timeline |
 | `hyggehub-energy-3d-card` | The home as a small 3D diorama: power and water flowing to the house, the car charging, the bins, live weather and daylight |
 | `hyggehub-bins-card` | The next bin collection with an icon for each kind of waste, then the next few, from your collection schedule |
 | `hyggehub-lists-card` | To-do lists you swipe between, with a completed group and a shared note |
@@ -402,10 +402,14 @@ views:
 
 Only the tabs you configure appear, and each device remembers the last one open. Each view is its own 3D
 scene: the house with its flows, alarm, bins and weather (tap the weather for the hourly and daily
-forecast); the people as clay figurines on little dioramas of their interests, in a carousel with who's home at
-the top (green ring: home, faded: away, asleep: eyes shut and z's; tap one and they wave); the countdowns as a carousel of floating islands, soonest first, themed from their icon and name (beach
-and summer, gift and birthday, mountains and trips, Christmas), each with a ring that fills as the day
-comes; arrows, dots or a swipe move between them. A `yearly` countdown appears once, for its next date,
+forecast); the people as cartoon figurines sculpted from their avatar settings (face shape, hair, beard, eye
+colour), standing side by side on little dioramas of their interests with their name, where they are and
+their phone battery over their heads (faded: away; asleep: eyes shut and z's; tap one to zoom in on them,
+and they wave); the countdowns as a carousel of floating islands, soonest first, themed from their icon and
+name (beach and summer, gift and birthday, mountains and trips, Christmas), each with a ring that fills as
+the day comes; arrows, dots or a swipe move between them. A 3D / Timeline chip switches the countdowns to a
+timeline instead: everything coming up along one line from now, spaced by how far off it is (down the side
+on a narrow screen). A `yearly` countdown appears once, for its next date,
 stays "Today" all day when it comes, and then moves to next year; a birthday's label says how old they turn.
 Switching tabs slides the views across and the camera glides into the new scene.
 Tapping any label zooms in on it and opens its details beside it.

@@ -4,6 +4,7 @@
 // tapping a name zooms in on that person. Who is away is faded; asleep: eyes shut and z's.
 import {
   CanvasTexture,
+  CatmullRomCurve3,
   Color,
   ConeGeometry,
   CylinderGeometry,
@@ -19,12 +20,14 @@ import {
   Sprite,
   SpriteMaterial,
   TorusGeometry,
+  TubeGeometry,
   Box3,
   Vector3,
   type BufferGeometry,
 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { armGeometry, BODY, bodyGeometry, eyeSpot, headGeometry } from './figures';
+import { armGeometry, BODY, bodyGeometry, headParts } from './figures';
+import type { V3 } from './sculpt';
 import { ball, capsule, ClayStage, clay, disc, mergeStatic, part, rbox, type StageLook } from './stage';
 
 export type Preset = 'woman' | 'man' | 'child' | 'baby';
@@ -643,49 +646,85 @@ export class PeopleScene extends ClayStage {
     };
   }
 
-  /** The sculpted head, with big glossy eyes set into it: an iris in two colours, a pupil, highlights. */
+  /**
+   * The sculpted head and its features: eyeballs in their sockets (a white ball with a ringed iris, a
+   * pupil and a catchlight, turning to look round) under a skin-coloured lid that blinks; brows and a
+   * closed smile as smooth lines on the face; hair and beard laid over.
+   */
   private head(p: FigureState, R: number, sculpt: MeshStandardMaterial, own: MeshStandardMaterial[]) {
-    const m = (color: string, roughness = 0.45) => {
+    const m = (color: string | Color, roughness = 0.45) => {
       const mat = new MeshStandardMaterial({ color, roughness });
       own.push(mat);
       return mat;
     };
+    const parts = headParts(p, R);
     const h = new Group();
-    const mesh = part(headGeometry(p, R), sculpt);
-    mesh.userData.keep = true;
-    h.add(mesh);
-    const baby = p.preset === 'baby';
+    const keep = (mesh: Mesh) => {
+      mesh.userData.keep = true;
+      h.add(mesh);
+    };
+    keep(part(parts.skin, sculpt));
+    if (parts.hair) keep(part(parts.hair, m(p.hair, 0.55)));
+    if (parts.beard) keep(part(parts.beard, m(new Color(p.hair).multiplyScalar(0.8), 0.75)));
+
     const woman = p.preset === 'woman';
-    const white = m('#fbf8f4', 0.2);
-    const rim = m(p.eyes, 0.25);
-    const inner = m(p.eyesInner, 0.25);
-    const pupil = m('#120f0d', 0.1);
-    const shine = m('#ffffff', 0.05);
-    const lid = m('#2a1d18', 0.6);
-    const eyeR = R * (baby ? 0.22 : 0.2);
-    const brow = new MeshStandardMaterial({ color: new Color(p.hair).multiplyScalar(0.55), roughness: 0.85 });
-    own.push(brow);
-    for (const side of [-1, 1]) {
+    const r = parts.eyeR;
+    const white = m('#fbfaf7', 0.12);
+    const limbal = m(new Color(p.eyes).multiplyScalar(0.45), 0.2);
+    const iris = m(p.eyes, 0.2);
+    const inner = m(p.eyesInner, 0.2);
+    const pupil = m('#0d0a09', 0.1);
+    const shine = new MeshStandardMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 0.8, roughness: 0.1 });
+    own.push(shine);
+    const lidSkin = m(p.skin, 0.62);
+    const lash = m('#2a1d18', 0.6);
+    // A cap of a sphere facing forward (+z): an iris or pupil on the eyeball's surface.
+    const disc = (radius: number, angle: number, mat: MeshStandardMaterial) => part(new SphereGeometry(radius, 32, 10, 0, Math.PI * 2, 0, angle), mat, [0, 0, 0], [Math.PI / 2, 0, 0]);
+    parts.eyes.forEach((at, i) => {
+      const side = i === 0 ? -1 : 1;
       const e = new Group();
       e.userData.eye = true;
-      e.position.set(...eyeSpot(R, side));
-      e.rotation.y = side * 0.2;
-      e.add(part(ball(eyeR, 20, 16), white, [0, 0, 0], [0, 0, 0], [0.9, 1.15, 0.55]));
-      e.add(part(ball(eyeR * 0.74, 18, 14), rim, [0, -eyeR * 0.06, eyeR * 0.3], [0, 0, 0], [0.95, 1.05, 0.42]));
-      e.add(part(ball(eyeR * 0.52, 16, 12), inner, [0, -eyeR * 0.06, eyeR * 0.4], [0, 0, 0], [0.95, 1.05, 0.38]));
-      e.add(part(ball(eyeR * 0.32, 16, 12), pupil, [0, -eyeR * 0.06, eyeR * 0.46], [0, 0, 0], [0.95, 1.05, 0.3]));
-      e.add(part(ball(eyeR * 0.17, 12, 10), shine, [eyeR * 0.22, eyeR * 0.28, eyeR * 0.53]));
-      e.add(part(ball(eyeR * 0.08, 10, 8), shine, [-eyeR * 0.2, -eyeR * 0.25, eyeR * 0.53]));
-      // Upper lid: a dark arc over the top (thicker, with a flick, for the woman).
-      e.add(part(new TorusGeometry(eyeR * 0.93, eyeR * (woman ? 0.11 : 0.08), 8, 24, Math.PI * 0.9), lid, [0, eyeR * 0.08, eyeR * 0.2], [0, 0, Math.PI * 0.05], [0.95, 1.12, 0.6]));
-      if (woman) e.add(part(capsule(eyeR * 0.06, eyeR * 0.3), lid, [side * eyeR * 0.95, eyeR * 0.45, eyeR * 0.2], [0, 0, side * -0.9]));
+      e.position.set(...at);
+      e.rotation.y = side * 0.06;
+      const ballG = new Group();
+      ballG.add(part(new SphereGeometry(r, 28, 20), white));
+      ballG.add(disc(r * 1.002, 0.74, limbal));
+      ballG.add(disc(r * 1.004, 0.66, iris));
+      ballG.add(disc(r * 1.006, 0.42, inner));
+      ballG.add(disc(r * 1.008, 0.3, pupil));
+      e.add(ballG);
+      // Catchlights stay put while the eye turns, as a window's reflection would.
+      const glints = new Group();
+      glints.add(part(ball(r * 0.2, 14, 10), shine, [r * 0.3, r * 0.34, r * 0.86]));
+      glints.add(part(ball(r * 0.08, 10, 8), shine, [-r * 0.26, -r * 0.3, r * 0.9]));
+      e.add(glints);
+      e.userData.glints = glints;
+      // The upper lid: the top half of a skin-coloured shell, tipped back to show the eye; a lash line
+      // along its edge (fuller, with a flick at the corner, for her).
+      const lid = new Group();
+      lid.add(part(new SphereGeometry(r * 1.07, 28, 10, 0, Math.PI * 2, 0, Math.PI / 2), lidSkin));
+      lid.add(part(new TorusGeometry(r * 1.08, r * (woman ? 0.09 : 0.065), 8, 32, Math.PI), lash, [0, 0, 0], [Math.PI / 2, 0, 0]));
+      if (woman) for (const k of [0.25, 0.45]) lid.add(part(capsule(r * 0.04, r * 0.22), lash, [side * Math.cos(k) * r * 1.12, r * 0.12, Math.sin(k) * r * 1.12], [0, 0, -side * 0.9]));
+      e.add(lid);
+      // Shut: a soft curve of lashes across the closed lid.
+      const sleep = part(new TorusGeometry(r * 0.62, r * 0.07, 8, 24, Math.PI), lash, [0, r * 0.2, r * 1.0], [0, 0, Math.PI]);
+      sleep.visible = false;
+      e.add(sleep);
+      e.userData.sleep = sleep;
+      e.userData.ball = ballG;
+      e.userData.lid = lid;
       h.add(e);
-      // Brows, thick and expressive: smooth parts of their own, too fine a detail for the clay.
-      if (!baby) {
-        const w = R * (woman ? 0.032 : 0.05);
-        h.add(part(capsule(w, R * 0.26), brow, [side * R * 0.36, R * (woman ? 0.31 : 0.29), R * 0.86], [0.35, side * 0.35, Math.PI / 2 - side * (woman ? 0.18 : 0.14)], [1, 1, 0.7]));
-      }
-    }
+    });
+
+    // Brows and a closed smile: smooth lines lying on the face.
+    const line = (pts: V3[], radius: number, mat: MeshStandardMaterial) => {
+      const curve = new CatmullRomCurve3(pts.map(v => new Vector3(...v)));
+      h.add(part(new TubeGeometry(curve, 24, radius, 8, false), mat));
+      for (const end of [pts[0], pts[pts.length - 1]]) h.add(part(ball(radius, 10, 8), mat, end));
+    };
+    const brow = m(new Color(p.hair).multiplyScalar(0.6), 0.8);
+    for (const b of parts.brows) line(b, parts.browR, brow);
+    if (parts.smile) line(parts.smile, R * 0.024, m('#6b2f2b', 0.5));
     return h;
   }
 
@@ -725,8 +764,17 @@ export class PeopleScene extends ClayStage {
         }
         f.blink = Math.max(0, f.blink - dt);
       }
-      const open = asleep ? 0.1 : f.blink > 0 ? 0.12 : 1;
-      for (const e of f.eyes) e.scale.y = open;
+      // Lids: open, tipped back; shut, rolled down over the eye. The eyes lead where the head turns.
+      const shut = asleep || f.blink > 0;
+      const gaze = asleep ? 0 : MathUtils.clamp((f.lookTarget - f.look) * 1.4 + f.lookTarget * 0.3, -0.45, 0.45);
+      for (const e of f.eyes) {
+        (e.userData.lid as Object3D).rotation.x = shut ? 1.5 : -0.95;
+        (e.userData.sleep as Object3D).visible = shut;
+        (e.userData.glints as Object3D).visible = !shut;
+        const b = e.userData.ball as Object3D;
+        b.rotation.y = gaze;
+        b.rotation.x = -0.1;
+      }
       // Waving with the right hand (and whatever is in it).
       if (motion) f.wave = Math.max(0, f.wave - dt);
       const lift = MathUtils.smoothstep(f.wave, 0, 0.35) * (f.wave > 0 ? 1 : 0);

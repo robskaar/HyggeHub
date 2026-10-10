@@ -57,6 +57,8 @@ export abstract class WorldCard<C extends WorldCardConfig> extends HyggeCard<C> 
   private seen?: IntersectionObserver;
   private ticker?: number;
   private onEngine = () => this.push();
+  /** True while the card shows something else in place of the scene (the countdowns' timeline). */
+  private hidden3d = false;
 
   protected abstract createWorld(mod: WorldModule, canvas: HTMLCanvasElement, onLabels: (l: StageLabel[]) => void, pixelRatio: number): World;
   protected abstract worldState(): unknown;
@@ -152,7 +154,8 @@ export abstract class WorldCard<C extends WorldCardConfig> extends HyggeCard<C> 
       if (this.isConnected && !this.failed) void this.init();
       return;
     }
-    if (this.visible && this.isConnected && engine.motionOn) this.world.start();
+    if (this.hidden3d) this.world.stop();
+    else if (this.visible && this.isConnected && engine.motionOn) this.world.start();
     else {
       this.world.stop();
       this.world.renderOnce();
@@ -166,6 +169,14 @@ export abstract class WorldCard<C extends WorldCardConfig> extends HyggeCard<C> 
       el.style.transform = `translate(${l.x}px, ${l.y}px) translate(-50%, -50%)`;
       el.classList.toggle('off', !l.visible);
     }
+  }
+
+  /** Stop drawing the scene while something else covers it, and pick up again after. */
+  protected hide3d(hidden: boolean) {
+    if (hidden === this.hidden3d) return;
+    this.hidden3d = hidden;
+    this.resume();
+    if (!hidden) this.world?.intro();
   }
 
   protected openDetail(key: string) {
