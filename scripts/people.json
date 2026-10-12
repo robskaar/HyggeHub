@@ -1,0 +1,9 @@
+{
+  "//": "The people whose figurines `npm run people` bakes into dist/hyggehub-people.glb: their `avatar` and `interests` exactly as in the dashboard. Anyone else is sculpted in the browser instead (slower the first time).",
+  "people": [
+    { "avatar": { "preset": "man", "hair": "brown", "hair_style": "buzz", "beard": "short", "eyes": "green-brown" }, "interests": ["cooking", "tech"] },
+    { "avatar": { "preset": "woman", "hair": "brown", "hair_style": "long", "eyes": "blue" }, "interests": ["gardening", "decor"] },
+    { "avatar": { "preset": "child", "hair": "brown", "eyes": "brown" }, "interests": ["bugs", "pokemon", "nature"] },
+    { "avatar": { "preset": "baby", "hair": "brown", "eyes": "blue" }, "interests": ["cars"] }
+  ]
+}

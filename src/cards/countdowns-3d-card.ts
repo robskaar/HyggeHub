@@ -44,9 +44,10 @@ const span = (ms: number) => {
 };
 
 /**
- * The countdowns as a carousel of themed islands, soonest first. Arrows, dots, swipes and the keyboard
- * move between them; the one in front has its label and opens its details. A chip switches to a
- * timeline instead: everything coming up along one line from now, spaced by how far off it is.
+ * The countdowns as a carousel of themed dioramas, soonest first, with everything about each written on
+ * the things in it (the name iced on a cake, the days on a present's tag, a towel, a signpost). Arrows,
+ * dots, swipes and the keyboard move between them. A chip switches to a timeline instead: everything
+ * coming up along one line from now, spaced by how far off it is; tapping a stop shows its diorama.
  */
 export class HyggeCountdowns3dCard extends WorldCard<Countdowns3dCardConfig> {
   protected override tickEvery = 30_000;
@@ -60,6 +61,13 @@ export class HyggeCountdowns3dCard extends WorldCard<Countdowns3dCardConfig> {
     } catch {
       return 'world';
     }
+  }
+
+  /** From the timeline: the diorama of countdown `i`. */
+  private show(i: number) {
+    const at = this.ordered().findIndex(x => x.i === i);
+    if (at >= 0) this.index = at;
+    this.setView('world');
   }
 
   private setView(v: 'world' | 'timeline') {
@@ -129,6 +137,15 @@ export class HyggeCountdowns3dCard extends WorldCard<Countdowns3dCardConfig> {
     this.index = next;
   }
 
+  /** The time left as a big number and its unit, to write on things: "21" "days", "3:20" "hours", "Today!". */
+  private bigAndUnit(x: ReturnType<HyggeCountdowns3dCard['resolveOne']>): [string, string] {
+    if (x.r.idleText) return [x.r.idleText, ''];
+    if (x.done) return [x.d.done_text ?? 'Today!', ''];
+    if (x.left.days >= 1) return [String(x.left.days), x.left.days === 1 ? 'day' : 'days'];
+    if (x.left.hours >= 1) return [`${x.left.hours}:${String(x.left.minutes).padStart(2, '0')}`, 'hours'];
+    return [String(x.left.minutes), 'min'];
+  }
+
   /** "123 days", "1 day", "3 h 20 min", "Today". */
   private remaining(x: ReturnType<HyggeCountdowns3dCard['resolveOne']>) {
     if (x.r.idleText) return x.r.idleText;
@@ -148,24 +165,26 @@ export class HyggeCountdowns3dCard extends WorldCard<Countdowns3dCardConfig> {
       ...this.look(),
       accent: css.getPropertyValue('--hh-accent').trim() || '#2f6e86',
       index: at,
-      items: all.map(x => ({ key: `c${x.i}`, theme: themeOf(x.d.icon, x.d.name), progress: x.r.progress ?? 0, done: x.done })),
+      items: all.map(x => {
+        const [big, unit] = this.bigAndUnit(x);
+        return {
+          key: `c${x.i}`,
+          theme: themeOf(x.d.icon, x.d.name),
+          progress: x.r.progress ?? 0,
+          done: x.done,
+          name: x.d.name,
+          subtitle: x.d.subtitle ?? x.r.subtitle,
+          big,
+          unit,
+          when: x.r.target ? formatDay(x.r.target, this.hass) : '',
+          age: x.age,
+        };
+      }),
     };
   }
 
   protected override labels(): WorldLabel[] {
-    if (this.view === 'timeline') return [];
-    const { all, at } = this.current();
-    const x = all[at];
-    if (!x) return [];
-    return [
-      {
-        key: `c${x.i}`,
-        value: this.remaining(x),
-        caption: x.age ? `${x.d.name} · turns ${x.age}` : x.d.name,
-        icon: x.d.icon ?? CLOCK,
-        color: 'var(--hh-accent)',
-      },
-    ];
+    return [];
   }
 
   protected override detailTitle(key: string) {
@@ -256,8 +275,7 @@ export class HyggeCountdowns3dCard extends WorldCard<Countdowns3dCardConfig> {
                 type="button"
                 class="stop ${k % 2 ? 'b' : 'a'} ${x.done ? 'today' : ''}"
                 style="--c:${colour};--d:${k}"
-                aria-haspopup="dialog"
-                @click=${() => this.openDetail(`c${x.i}`)}
+                @click=${() => this.show(x.i)}
               >
                 <span class="dot">${this.glyph(x.d.icon ?? CLOCK)}</span>
                 <span class="card">
@@ -296,6 +314,9 @@ export class HyggeCountdowns3dCard extends WorldCard<Countdowns3dCardConfig> {
     glass,
     worldStyles,
     css`
+      .overlay {
+        z-index: 3;
+      }
       .overlay .viewseg {
         pointer-events: auto;
       }
@@ -416,11 +437,11 @@ export class HyggeCountdowns3dCard extends WorldCard<Countdowns3dCardConfig> {
         z-index: 2;
         width: 0;
         align-self: stretch;
-        display: grid;
-        place-items: center;
       }
       .dot {
-        position: relative;
+        position: absolute;
+        left: -22px;
+        top: calc(50% - 22px);
         z-index: 1;
         width: 44px;
         height: 44px;
@@ -594,10 +615,10 @@ export class HyggeCountdowns3dCard extends WorldCard<Countdowns3dCardConfig> {
           width: auto;
           height: 0;
           align-self: stretch;
-          place-items: center start;
         }
         .dot {
-          margin-left: -1px;
+          left: -1px;
+          top: -22px;
         }
         .stop.a .card,
         .stop.b .card {

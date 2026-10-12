@@ -421,8 +421,21 @@ export class Sculpt {
   }
 }
 
-/** Sculpted meshes by what they are made of, so a view built again (a tab switch) doesn't re-sculpt. */
+/**
+ * Sculpted meshes by what they are made of, so a view built again (a tab switch) doesn't re-sculpt, and
+ * so meshes baked ahead of time (scripts/build-people.mjs) are used instead of sculpting at all.
+ */
 const made = new Map<string, BufferGeometry>();
+
+/** A mesh baked ahead of time, for `sculpted` to use under its key. */
+export function preloadSculpt(key: string, geo: BufferGeometry) {
+  made.set(key, geo);
+}
+
+/** Everything sculpted so far, by key (for baking). */
+export function allSculpted(): ReadonlyMap<string, BufferGeometry> {
+  return made;
+}
 export function sculpted(key: string, cell: number, build: () => Sculpt) {
   let g = made.get(key);
   if (!g) {

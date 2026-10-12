@@ -65,6 +65,11 @@ export abstract class WorldCard<C extends WorldCardConfig> extends HyggeCard<C> 
   protected abstract labels(): WorldLabel[];
   protected abstract detailTitle(key: string): string;
   protected abstract detailBody(key: string): TemplateResult | typeof nothing;
+  /**
+   * Details as a row of chips along the bottom (a back chip first) instead of a panel at the side, so
+   * the scene behind them stays in view. The view's details then return chips.
+   */
+  protected dock = false;
   /** Re-render this often while shown, e.g. every second for a countdown. Default: once a minute. */
   protected tickEvery = 60_000;
 
@@ -214,7 +219,7 @@ export abstract class WorldCard<C extends WorldCardConfig> extends HyggeCard<C> 
     const labels = this.labels();
     const detail = this.detail ? labels.find(l => l.key === this.detail) : undefined;
     return html`
-      <ha-card class=${classMap({ glass: true, embedded: !!c.embedded })}>
+      <ha-card class=${classMap({ glass: true, embedded: !!c.embedded, docked: this.dock })}>
         <div class=${classMap({ stage: true, focused: !!this.detail })} style=${c.embedded ? 'height:100%' : `height:${c.height ?? 380}px`}>
           <canvas role="img" aria-label=${labels.map(l => `${l.caption} ${l.value}`).join(', ')}></canvas>
           <div class="loading" aria-hidden="true"></div>
@@ -226,7 +231,10 @@ export abstract class WorldCard<C extends WorldCardConfig> extends HyggeCard<C> 
               ${l.chips?.length ? html`<span class="kinds">${l.chips.map(k => html`<span class="kind" style="--c:${k.color}" title=${k.name}>${haIcon(k.icon)}</span>`)}</span>` : nothing}
             </button>`,
           )}
-          ${this.detail
+          ${this.detail && this.dock
+            ? html`<button type="button" class="dock-back" @click=${() => this.closeDetail()}><svg viewBox="0 0 24 24" class="i"><path d="M15 6l-6 6 6 6"></path></svg><b>Back</b></button>
+                <div class="dock" role="dialog" aria-label=${this.detailTitle(this.detail)} @keydown=${(e: KeyboardEvent) => e.key === 'Escape' && this.closeDetail()}>${this.detailBody(this.detail)}</div>`
+            : this.detail
             ? html`<div class="panel" role="dialog" aria-label=${this.detailTitle(this.detail)} @keydown=${(e: KeyboardEvent) => e.key === 'Escape' && this.closeDetail()}>
                 <div class="panel-h">
                   <button type="button" class="back" @click=${() => this.closeDetail()}><svg viewBox="0 0 24 24" class="i"><path d="M15 6l-6 6 6 6"></path></svg>Back</button>

@@ -178,6 +178,85 @@ export const worldStyles = css`
         opacity: 0 !important;
         pointer-events: none;
       }
+      /* Details as chips along the bottom. */
+      .dock {
+        position: absolute;
+        left: 12px;
+        right: 12px;
+        bottom: 14px;
+        z-index: 3;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        align-items: center;
+        gap: 6px;
+        pointer-events: none;
+        animation: dock-in 0.5s var(--spring, ease) both;
+        animation-delay: 0.45s;
+      }
+      .dock .chip {
+        pointer-events: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        max-width: 100%;
+        padding: 7px 13px 7px 10px;
+        border-radius: 999px;
+        font-size: 12.5px;
+        font-weight: 600;
+        color: var(--hh-ink);
+        background: var(--hh-glass-strong);
+        -webkit-backdrop-filter: blur(14px) saturate(160%);
+        backdrop-filter: blur(14px) saturate(160%);
+        border: 1px solid var(--hh-stroke);
+        box-shadow: var(--hh-shadow);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .dock .chip .i {
+        width: 15px;
+        height: 15px;
+        flex: none;
+        opacity: 0.8;
+      }
+      .dock .chip small {
+        font-weight: 500;
+        color: var(--hh-ink-3);
+      }
+      /* Back, where the title and chips are while the details are closed. */
+      .dock-back {
+        position: absolute;
+        top: 16px;
+        left: 18px;
+        z-index: 4;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 7px 14px 7px 8px;
+        border-radius: 999px;
+        font-size: 13px;
+        font-weight: 600;
+        background: var(--hh-accent);
+        color: var(--hh-on-accent);
+        box-shadow: var(--hh-shadow);
+        animation: dock-in 0.4s var(--spring, ease) both;
+        animation-delay: 0.6s;
+      }
+      .dock-back .i {
+        width: 16px;
+        height: 16px;
+      }
+      /* The header steps aside for Back: hidden, and not catching taps (its chips would). */
+      ha-card.docked .stage.focused ~ .overlay {
+        visibility: hidden;
+      }
+      @keyframes dock-in {
+        from {
+          opacity: 0;
+          transform: translateY(14px);
+        }
+      }
       .panel {
         position: absolute;
         top: 60px;
@@ -372,6 +451,9 @@ export const worldStyles = css`
   /* Below the home card's tabs. */
   ha-card.embedded .overlay {
     top: 68px;
+  }
+  ha-card.embedded .dock-back {
+    top: 66px;
   }
   ha-card.embedded .panel {
     top: 112px;

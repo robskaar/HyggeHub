@@ -1,3 +1,7 @@
 node_modules/
 *.log
 .DS_Store
+
+# Private: the live dashboard and entity list
+MY-DASHBOARD.md
+scripts/blender/previews/

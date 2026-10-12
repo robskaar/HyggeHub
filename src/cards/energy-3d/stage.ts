@@ -14,8 +14,10 @@ import {
   MathUtils,
   Mesh,
   MeshStandardMaterial,
+  type Material,
   Object3D,
   PCFSoftShadowMap,
+  PMREMGenerator,
   PerspectiveCamera,
   Scene,
   Sphere,
@@ -25,6 +27,7 @@ import {
   WebGLRenderer,
   type BufferGeometry,
 } from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
@@ -57,7 +60,7 @@ export function clay(color: string, extra: Partial<{ roughness: number; metalnes
   return m;
 }
 
-export function part(geo: BufferGeometry, mat: MeshStandardMaterial, pos: [number, number, number] = [0, 0, 0], rot: [number, number, number] = [0, 0, 0], scale: [number, number, number] = [1, 1, 1]) {
+export function part(geo: BufferGeometry, mat: Material, pos: [number, number, number] = [0, 0, 0], rot: [number, number, number] = [0, 0, 0], scale: [number, number, number] = [1, 1, 1]) {
   const m = new Mesh(geo, mat);
   m.position.set(...pos);
   m.rotation.set(...rot);
@@ -160,7 +163,8 @@ export abstract class ClayStage {
     pixelRatio: number,
   ) {
     // Throws when WebGL is unavailable; the card shows a message instead.
-    const r = new WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'low-power' });
+    // A stencil buffer for views that cut their pictures to a shape (the people's rounded cards).
+    const r = new WebGLRenderer({ canvas, antialias: true, alpha: true, stencil: true, powerPreference: 'low-power' });
     this.renderer = r;
     r.setPixelRatio(pixelRatio);
     r.setClearColor(0x000000, 0);
@@ -182,6 +186,11 @@ export abstract class ClayStage {
     sc.near = 1;
     sc.far = 70;
     this.fill.position.set(-12, 7, 6);
+    // Soft light from all round (a studio's), so the clay shades gently and picks up highlights.
+    const pmrem = new PMREMGenerator(r);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    this.scene.environmentIntensity = 0.28;
+    pmrem.dispose();
     this.bindPointer();
   }
 
@@ -267,7 +276,8 @@ export abstract class ClayStage {
     out.y = Math.max(0.4, out.y - 1.1);
   }
 
-  private animateFor(seconds: number) {
+  /** Keep drawing for a while when the loop is stopped (motion off), e.g. while the camera moves. */
+  protected animateFor(seconds: number) {
     this.settle = seconds;
     let last = performance.now();
     const step = (now: number) => {
@@ -301,9 +311,10 @@ export abstract class ClayStage {
     const n = this.night;
     this.sun.color.set('#fff1dc').lerp(new Color('#9db4ff'), n);
     this.sun.intensity = MathUtils.lerp(2.6, 0.55, n);
+    this.scene.environmentIntensity = MathUtils.lerp(0.28, 0.1, n);
     this.hemi.color.set('#dfefff').lerp(new Color('#3a4a78'), n);
     this.hemi.groundColor.set('#5b6b4a').lerp(new Color('#1c2230'), n);
-    this.hemi.intensity = MathUtils.lerp(1.15, 0.5, n);
+    this.hemi.intensity = MathUtils.lerp(1.05, 0.5, n);
     this.fill.intensity = MathUtils.lerp(0.7, 0.15, n);
 
     // Camera: drag to swing, eases home; zoom on a focused spot with the picture slid aside.
@@ -332,8 +343,13 @@ export abstract class ClayStage {
     } else if (this.camera.view) this.camera.clearViewOffset();
 
     this.animate(dt, this.time, motion);
-    this.renderer.render(this.scene, this.camera);
+    this.draw();
     this.emitLabels();
+  }
+
+  /** Draw the frame. Views can draw differently, e.g. several cameras into parts of the canvas. */
+  protected draw() {
+    this.renderer.render(this.scene, this.camera);
   }
 
   private emitLabels() {
