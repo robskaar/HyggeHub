@@ -64,7 +64,7 @@ const put = (e: HassEntity) => (states[e.entity_id] = e);
   ent('alarm_control_panel.home', 'disarmed', { friendly_name: 'Alarm', code_format: 'number', code_arm_required: true, supported_features: 1 | 2 | 4 }),
   ent('person.alex', 'home', { friendly_name: 'Alex' }),
   ent('calendar.familien', 'off', { friendly_name: 'Familien' }),
-  ent('person.sam', 'home', { friendly_name: 'Sam' }),
+  ent('person.sam', location.hash.includes('away') ? 'Work' : 'home', { friendly_name: 'Sam' }),
   ent('sensor.alex_phone_battery', '82', { unit_of_measurement: '%' }),
   ent('sensor.sam_phone_battery', '34', { unit_of_measurement: '%' }),
   ent('input_boolean.ella_asleep', 'on', { friendly_name: 'Ella asleep' }),
@@ -201,7 +201,7 @@ if (homeMode) {
       { name: 'Sommerferie', icon: 'mdi:beach', target: '2027-07-01T08:00', start: '2026-08-15' },
       { name: 'Juleaften', icon: 'mdi:pine-tree', target: '2026-12-24', yearly: true },
       { name: 'Robert', icon: 'mdi:cake-variant', target: '1994-09-29', yearly: true },
-      { name: 'Mette', icon: 'mdi:cake-variant', target: '1995-11-01', yearly: true },
+      { name: 'Mette', icon: 'mdi:cake-variant', target: '1994-11-01', yearly: true },
       { name: 'Pelle', icon: 'mdi:cake-variant', target: '2021-03-12', yearly: true },
       { name: 'Hjalte', icon: 'mdi:cake-variant', target: '2025-08-20', yearly: true },
     ],
@@ -336,7 +336,7 @@ if (open)
   setTimeout(() => {
     const inHome = document.querySelector('hyggehub-home-card')?.shadowRoot?.querySelectorAll('.view > * > *') ?? [];
     [...document.querySelectorAll('hyggehub-energy-3d-card'), ...inHome].forEach(card =>
-      card.shadowRoot?.querySelector<HTMLButtonElement>(open === 'weather' ? '.weather' : `.tag[data-key="${open}"]`)?.click(),
+      card.shadowRoot?.querySelector<HTMLButtonElement>(open === 'weather' ? '.weather' : /^p\d+$/.test(open) ? `.fgs .cell:nth-child(${Number(open.slice(1)) + 1})` : `.tag[data-key="${open}"]`)?.click(),
     );
   }, 3500);
 // Dev-only: #chip-2 picks the third person (or countdown) in a carousel, for screenshots.
@@ -365,3 +365,9 @@ if (location.hash.includes('still')) {
   still();
   [300, 1000, 2500].forEach(ms => setTimeout(still, ms));
 }
+// Dev-only: #back taps Back a while after #open- has opened something, for screenshots.
+if (location.hash.includes('#back'))
+  setTimeout(() => {
+    const inHome = document.querySelector('hyggehub-home-card')?.shadowRoot?.querySelectorAll('.view > * > *') ?? [];
+    [...inHome].forEach(card => card.shadowRoot?.querySelector<HTMLButtonElement>('.dock-back')?.click());
+  }, 6000);
