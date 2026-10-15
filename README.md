@@ -22,7 +22,7 @@ A Nordic glass design system for Home Assistant: thirteen custom cards, six comp
 | `hyggehub-alarm-card` | The alarm's state in one circle; tapping it walks through mode → code → exit delay |
 | `hyggehub-countdown-card` | A date, a weekly event, a timer, an `input_datetime` or a calendar entry |
 | `hyggehub-home-card` | The whole home in 3D behind tabs (house, people, countdowns), filling a panel view |
-| `hyggehub-people-3d-card` | The family as little clay figures: who is home, away or asleep, and what's next for them |
+| `hyggehub-people-3d-card` | The family in a little town: their house, the places they go, everyone where they are and where they go next |
 | `hyggehub-countdowns-3d-card` | Each countdown as a little diorama dressed for the occasion, with the countdown written on its cake, tags and signs; or all of them on a timeline |
 | `hyggehub-energy-3d-card` | The home as a small 3D diorama: power and water flowing to the house, the car charging, the bins, live weather and daylight |
 | `hyggehub-bins-card` | The next bin collection with an icon for each kind of waste, then the next few, from your collection schedule |
@@ -392,27 +392,32 @@ views:
           - entity: person.alex
             # 3D extras: hair_style (buzz, short, long, bald) and beard (short, full)
             avatar: { preset: man, hair: brown, hair_style: buzz, beard: short, eyes: green-brown }
-            # what they love dresses their diorama: cooking, tech, gardening, decor, bugs, pokemon, nature, cars
-            interests: [cooking, tech]
-            # model: /local/people/alex.glb   # a sculpted GLB instead of the built figure ("idle" animation plays)
+            # model: /local/people/alex.glb   # their own figure as a GLB (nodes head, eye_l, eye_r, arm_l, arm_r animate)
+        places:                 # optional: places for the town beyond your zones and the calendars' places
+          - { name: Momo & Mofa, kind: family }   # office, school, kindergarten, field, family, shop, garden, generic
         countdowns:             # the same countdowns as the countdown card; a carousel, soonest first
           - { name: Summer holiday, icon: mdi:beach, target: "2027-07-01T08:00" }
           - { name: Alex, icon: mdi:cake-variant, target: "1994-09-29", yearly: true }   # turns 32
 ```
 
-The family's figures are modelled in Blender (`scripts/blender/`: `alt_heads.py -- <outdir> <names> --full --export` writes `scripts/blender/out/<name>.glb`), and ship as `dist/people/<name>.glb`; a person whose name has a figure there gets it, with its head, eyes and arms animated. Anyone else gets a figurine sculpted from their avatar settings. For your own family, bake them ahead of time so the
-people view just loads them: put their `avatar` and `interests` in `scripts/people.json` and run `npm run people`
-(then `npm run build`); `dist/hyggehub-people.glb.gz` ships beside the bundle. Anyone not baked is sculpted in the
-browser the first time instead, which takes a second or two each.
+The family's figures are modelled in Blender (`scripts/blender/`: `alt_heads.py -- <outdir> <names> --full --export` writes `scripts/blender/out/<name>.glb`), and ship as `dist/people/<name>.glb`; a person whose name has a figure there gets it, with its head, eyes and arms animated (they blink, look about, swing their arms as they walk and wave when tapped). Anyone else is a simple clay figure in their avatar's colours.
 
 Only the tabs you configure appear, and each device remembers the last one open. Each view is its own 3D
 scene: the house with its flows, alarm, bins and weather (tap the weather for the hourly and daily
-forecast); the people as a card each, in the colours of their diorama, with a portrait of their cartoon
-figurine (sculpted from their avatar settings: face shape, hair, beard, eye colour), their name, where they
-are, their phone battery and what's next in their calendar (away: they show as a hologram; asleep: eyes shut
-and z's); tap a card and it opens like a portal: the camera steps through it into their room (a kitchen, a
-greenhouse, a child's room, a nursery, dressed for their interests) with all their details, and back out
-again; the countdowns as a carousel of little dioramas, soonest first, themed from their icon and name
+forecast); the people as a little town round the house: the house view's own island in the middle (the same
+scene, so the same light, the bins where they are, the flows running), and when the tab opens the camera
+starts on it just as the house view shows it while square plots rise into place round it, with roads
+between; going back to the house tab they sink again. Round the house: the places they go (Home
+Assistant's zones, the places in their calendars and any `places` you add: an office block, a school, a
+nursery with a slide, a pitch, a red-brick villa or a thatched farmhouse for the grandparents, a shop, a
+greenhouse; the kind is guessed from the name), woods and a meadow with Dannebrog, and here and there
+something one of them loves, where it suits (a radio mast by the office, a Pokéball statue with Pikachu by
+the school, a digger by the nursery, vegetable beds, a barbecue, a flea-market stall, a bug hotel, a duck
+pond). Everyone stands where they are (out somewhere the town doesn't know: at the bus stop on the road
+out; asleep: indoors, with z's from the window) and walks there along the roads when that changes; a
+dotted trail in their colour leads to where they go next with a pin bobbing there, and each place's label
+says who goes there, for what and when. Tap someone and the camera swoops down to them, with where they've
+been since when, their battery, sensors and calendar as chips along the bottom. The countdowns as a carousel of little dioramas, soonest first, themed from their icon and name
 (beach and summer, gift and birthday, mountains and trips, Christmas), with everything written on the
 things in them: the name iced on a birthday cake with the age as a topper and the days left on the
 present's tag, a signpost and a gift tag under the Christmas tree, a beach towel and a surfboard, a

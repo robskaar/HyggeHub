@@ -95,7 +95,7 @@ export interface SceneState {
 }
 
 export interface LabelPosition {
-  key: LabelKey;
+  key: string;
   x: number;
   y: number;
   /** Behind the camera or off the canvas. */
@@ -299,7 +299,7 @@ const glowFragment = /* glsl */ `
 `;
 
 /** Yellow brick: courses of bricks with lighter mortar, from the wall's own position, so no texture. */
-function patchBrick(mat: MeshStandardMaterial) {
+export function patchBrick(mat: MeshStandardMaterial) {
   mat.onBeforeCompile = shader => {
     const decl = 'varying vec3 vObjPos;\nvarying vec3 vObjNormal;';
     shader.vertexShader = shader.vertexShader
@@ -340,14 +340,14 @@ interface Cloud {
 }
 
 export class IslandScene {
-  private readonly renderer: WebGLRenderer;
-  private readonly scene = new Scene();
-  private readonly camera = new PerspectiveCamera(24, 1, 0.5, 200);
+  protected readonly renderer: WebGLRenderer;
+  protected readonly scene = new Scene();
+  protected readonly camera = new PerspectiveCamera(24, 1, 0.5, 200);
   private readonly clock = new Clock();
-  private readonly root = new Group();
-  private model?: Object3D;
+  protected readonly root = new Group();
+  protected model?: Object3D;
   private flows: Flow[] = [];
-  private anchors = new Map<LabelKey, Object3D>();
+  protected anchors = new Map<string, Object3D>();
   private spinners: Array<{ node: Object3D; kind: string }> = [];
   private floaters: Array<{ node: Object3D; y: number; phase: number }> = [];
   private nightLights: Array<{ light: PointLight; max: number }> = [];
@@ -361,46 +361,52 @@ export class IslandScene {
   private glows: Array<Mesh<CircleGeometry, ShaderMaterial>> = [];
   private driveMat?: MeshStandardMaterial;
   private bins: Array<{ node: Object3D; home: Vector3; out: Vector3; lids: MeshStandardMaterial[] }> = [];
-  private rain!: LineSegments<BufferGeometry, ShaderMaterial>;
-  private snow!: Points<BufferGeometry, ShaderMaterial>;
+  protected rain!: LineSegments<BufferGeometry, ShaderMaterial>;
+  protected snow!: Points<BufferGeometry, ShaderMaterial>;
   private smoke!: Points<BufferGeometry, ShaderMaterial>;
   private stars!: Points<BufferGeometry, ShaderMaterial>;
   private windowMat?: MeshStandardMaterial;
   private lampMat?: MeshStandardMaterial;
   private ledMat?: MeshStandardMaterial;
   private paintMat?: MeshStandardMaterial;
-  private readonly sun = new DirectionalLight('#fff4e0', 2.6);
+  protected readonly sun = new DirectionalLight('#fff4e0', 2.6);
   private readonly hemi = new HemisphereLight('#dfefff', '#5b6b4a', 1.1);
   /** A cool fill from the far side, so shadowed clay reads soft rather than black. */
   private readonly fill = new DirectionalLight('#dfe8ff', 0.6);
   private readonly fog = new Fog('#dce3e5', 30, 80);
 
-  private state?: SceneState;
+  protected state?: SceneState;
   /** Values that ease towards the state, so changes fade rather than jump. */
-  private eased = { night: 0, clouds: 0, gloom: 0, rain: 0, snow: 0, fog: 0, wind: 0, smoke: 0, drive: 0 };
+  protected eased = { night: 0, clouds: 0, gloom: 0, rain: 0, snow: 0, fog: 0, wind: 0, smoke: 0, drive: 0 };
   private spin = new Map<string, number>();
   private flash = 0;
   private nextFlash = 3;
   private secondFlash = 0;
 
-  private width = 1;
-  private height = 1;
+  protected width = 1;
+  protected height = 1;
   private yaw = 0;
   private yawVelocity = 0;
   private dragging = false;
   private lastDrag = 0;
   private frame = 0;
-  private running = false;
+  protected running = false;
   private time = 0;
-  private framing = new Sphere(new Vector3(), 8);
+  protected framing = new Sphere(new Vector3(), 8);
   /** Zooming in on one spot while the card shows its details beside it. */
-  private focusPoint = new Vector3();
-  private focusOn = false;
+  protected focusPoint = new Vector3();
+  protected focusOn = false;
   private focusEase = 0;
-  private focusSide: 'right' | 'bottom' = 'right';
+  protected focusSide: 'right' | 'bottom' | 'centre' = 'right';
   private settle = 0;
   /** 1 right after the view appears, easing to 0: the camera glides in. */
-  private introT = 0;
+  protected introT = 0;
+  /** The camera's angle round the island and up from the ground, in degrees. */
+  protected azimuth = 34;
+  protected elevation = 27;
+  /** Zoomed in: how far from the spot (default half the usual distance), and how high (default a little higher). */
+  protected focusDistance?: number;
+  protected focusElevation?: number;
 
   /** Glide the camera in from a little further out and round to the side, as when a tab opens. */
   intro() {
@@ -409,8 +415,8 @@ export class IslandScene {
   }
 
   constructor(
-    private readonly canvas: HTMLCanvasElement,
-    private readonly onLabels: (labels: LabelPosition[]) => void,
+    protected readonly canvas: HTMLCanvasElement,
+    protected readonly onLabels: (labels: LabelPosition[]) => void,
     pixelRatio: number,
   ) {
     // Throws when WebGL is unavailable; the card then falls back to the flat energy card.
@@ -478,7 +484,7 @@ export class IslandScene {
         if (mat.name === 'ChargerLed') this.ledMat = mat;
         if (mat.name === 'CarPaint') this.paintMat = mat;
       }
-      if (o.name.startsWith('anchor_')) this.anchors.set(o.name.slice(7) as LabelKey, o);
+      if (o.name.startsWith('anchor_')) this.anchors.set(o.name.slice(7), o);
       if (o.userData.spin) this.spinners.push({ node: o, kind: o.userData.spin });
       if (o.name.startsWith('floater_') && o.parent?.name !== o.name) this.floaters.push({ node: o, y: o.position.y, phase: Math.random() * 6 });
       const bin = /^bin_(\d+)$/.exec(o.name);
@@ -857,7 +863,7 @@ export class IslandScene {
    * Zooms in on a label's spot (null zooms back out). `side` is where the card puts its details: the
    * view slides the other way, so the spot stays visible beside them.
    */
-  focus(key: LabelKey | null, side: 'right' | 'bottom' = 'right') {
+  focus(key: string | null, side: 'right' | 'bottom' | 'centre' = 'right') {
     const node = key ? this.anchors.get(key) : undefined;
     if (node) {
       // Aim at the thing itself, not at the label floating beside it: the bins and the car by their own
@@ -880,7 +886,7 @@ export class IslandScene {
   }
 
   /** Runs frames for a while without motion, so a zoom still eases when animations are paused. */
-  private animateFor(seconds: number) {
+  protected animateFor(seconds: number) {
     this.settle = seconds;
     let last = performance.now();
     const step = (now: number) => {
@@ -903,18 +909,36 @@ export class IslandScene {
     if (!this.running) this.renderOnce();
   }
 
-  private layout() {
+  protected layout() {
     const aspect = this.width / this.height;
     this.camera.aspect = aspect;
     const vfov = MathUtils.degToRad(this.camera.fov);
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * aspect);
     const fit = Math.min(vfov, hfov);
     this.camDistance = this.framing.radius / Math.sin(fit / 2);
-    this.camera.near = Math.max(0.5, this.camDistance - 30);
+    // Near enough for the zoomed-in view too.
+    this.camera.near = Math.max(0.5, Math.min(this.camDistance, this.focusDistance ?? this.camDistance * 0.5) - 30);
     this.camera.far = this.camDistance + 60;
     this.camera.updateProjectionMatrix();
   }
-  private camDistance = 40;
+  protected camDistance = 40;
+  /** How far the sun (its shadow camera) stands from the middle. */
+  protected sunDistance = 25;
+
+  /** How far from the middle shadows are cast, for views larger than the island. */
+  protected shadowReach(r: number) {
+    const sc = this.sun.shadow.camera;
+    sc.left = sc.bottom = -r;
+    sc.right = sc.top = r;
+    sc.far = Math.max(60, r * 3);
+    sc.updateProjectionMatrix();
+    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.map?.dispose();
+    this.sun.shadow.map = null;
+  }
+
+  /** Called every frame before drawing, for views built on the island (the people's town). */
+  protected animate(_dt: number, _t: number, _motion: boolean) {}
 
   /** `cameraOnly`: a frame that moves the camera (a zoom easing in) while everything else stands still. */
   private tick(dt: number, still = false, cameraOnly = false) {
@@ -952,15 +976,16 @@ export class IslandScene {
     const f = this.focusEase;
     if (!still || cameraOnly) this.introT = Math.max(0, this.introT - dt / 1.3);
     const ie = this.introT * this.introT * (3 - 2 * this.introT);
-    const az = MathUtils.degToRad(34) + this.yaw + ie * 0.55;
-    const el = MathUtils.degToRad(27 + f * 4 + ie * 10);
+    const az = MathUtils.degToRad(this.azimuth) + this.yaw + ie * 0.55;
+    const el = MathUtils.degToRad(MathUtils.lerp(this.elevation, this.focusElevation ?? this.elevation + 4, f) + ie * 10);
     const c = this.framing.center.clone().lerp(this.focusPoint, f);
-    const dist = this.camDistance * (1 - 0.5 * f) * (1 + ie * 0.55);
+    const dist = MathUtils.lerp(this.camDistance, this.focusDistance ?? this.camDistance * 0.5, f) * (1 + ie * 0.55);
     this.camera.position.set(c.x + Math.sin(az) * Math.cos(el) * dist, c.y + Math.sin(el) * dist, c.z + Math.cos(az) * Math.cos(el) * dist);
     this.camera.lookAt(c);
     if (f > 0.001) {
       const w = this.width, h = this.height;
       if (this.focusSide === 'right') this.camera.setViewOffset(w, h, w * 0.24 * f, 0, w, h);
+      else if (this.focusSide === 'centre') this.camera.setViewOffset(w, h, 0, h * 0.08 * f, w, h);
       else this.camera.setViewOffset(w, h, 0, h * 0.26 * f, w, h);
     } else if (this.camera.view) this.camera.clearViewOffset();
 
@@ -988,7 +1013,7 @@ export class IslandScene {
       sunDir.set(0.55, 0.75, 0.45);
     }
     if (n > 0.5) sunDir.set(-0.4, 0.8, 0.5); // the moon sits up and to the left
-    this.sun.position.copy(sunDir.normalize().multiplyScalar(25));
+    this.sun.position.copy(sunDir.normalize().multiplyScalar(this.sunDistance));
     this.sun.target.position.set(0, 0, 0);
     const dayColor = new Color('#fff1dc').lerp(new Color('#ffb877'), MathUtils.clamp(n * 2, 0, 1) * (n < 0.5 ? 1 : 0));
     const moon = new Color('#9db4ff');
@@ -1097,11 +1122,21 @@ export class IslandScene {
     this.fog.near = this.camDistance - 6 + (1 - e.fog) * 30;
     this.fog.far = this.camDistance + 8 + (1 - e.fog) * 60;
 
+    this.animate(dt, t, motion);
     this.renderer.render(this.scene, this.camera);
     this.emitLabels();
   }
 
   private lastLabels = '';
+  private listeners: Array<(labels: LabelPosition[]) => void> = [];
+
+  /** Another view's labels over this scene (the people's, over the house's island and town). */
+  listen(fn: (labels: LabelPosition[]) => void) {
+    this.listeners.push(fn);
+    this.lastLabels = '';
+    if (!this.running) this.renderOnce();
+  }
+
   private emitLabels() {
     const out: LabelPosition[] = [];
     const v = new Vector3();
@@ -1110,12 +1145,13 @@ export class IslandScene {
       v.project(this.camera);
       const x = (v.x * 0.5 + 0.5) * this.width;
       const y = (-v.y * 0.5 + 0.5) * this.height;
-      out.push({ key, x: Math.round(x * 2) / 2, y: Math.round(y * 2) / 2, visible: v.z < 1 && x > -40 && x < this.width + 40 });
+      out.push({ key, x: Math.round(x * 2) / 2, y: Math.round(y * 2) / 2, visible: v.z < 1 && x > -40 && x < this.width + 40 && !node.userData.hidden });
     }
     const sig = out.map(l => `${l.x},${l.y},${l.visible}`).join(';');
     if (sig === this.lastLabels) return;
     this.lastLabels = sig;
     this.onLabels(out);
+    for (const fn of this.listeners) fn(out);
   }
 
   // ---------- pointer: drag to swing the island around ----------

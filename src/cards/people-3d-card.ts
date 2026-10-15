@@ -6,16 +6,31 @@ import { fetchEvents, forPerson, nowAndNext, shortPlace, type CalEvent } from '.
 import { formatState, friendlyName } from '../shared/format';
 import { interestsOf } from '../shared/interests';
 import { base, glass } from '../shared/styles';
+import { weatherFrom } from './energy-3d-card';
+import type { SceneState } from './energy-3d/scene';
 import type { PersonConfig } from './family-card';
 import { battery, calendars, status, whenText } from './family-card';
-import type { Interest, PeopleState } from './energy-3d/people';
 import type { StageLabel } from './energy-3d/stage';
+import type { PlaceKind, TownBits, TownPlace, TownState } from './energy-3d/town';
 import { worldStyles } from './energy-3d/world-styles';
 import { WorldCard, type WorldCardConfig, type WorldLabel, type WorldModule } from './world-card';
 
 export interface People3dCardConfig extends WorldCardConfig {
-  /** The same people as the family card, plus `interests` for their dioramas. */
+  /** The same people as the family card. */
   people: PersonConfig[];
+  /**
+   * Places for the town beyond those it finds itself (Home Assistant's zones, and the places in the
+   * calendars), e.g. `{ name: Mormor, kind: family }`. Kind: office, school, kindergarten, field,
+   * family, shop, garden or generic; guessed from the name when left out.
+   */
+  places?: Array<{ name: string; kind?: PlaceKind }>;
+  /** Weather entity for the rain and snow; default weather.forecast_home, else the first. */
+  weather?: string;
+  /**
+   * The house view's settings (the home card passes them on), so the house in the middle is the house
+   * view's own: its model, the bins where they are, its flows running, its car.
+   */
+  house?: Record<string, unknown>;
 }
 
 const PIN = 'M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21zM12 7.5a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4z';
@@ -24,29 +39,45 @@ const MOON = 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z';
 const BATTERY = 'M7 6h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zM17 10h2v4h-2';
 const CAL = 'M5 6h14v13H5zM5 10h14M9 4v4M15 4v4';
 
-/** Each card's colours, like the diorama of the person's first interest: its ground and a sky over it. */
-const GROUNDS = {
-  wood: { sky: '#f3e4cf', sky2: '#ead2b3', top: '#c49a6c', edge: '#8a6446' },
-  grass: { sky: '#e1f0d8', sky2: '#c6e2b8', top: '#8dbb67', edge: '#b88a63' },
-  sand: { sky: '#faeed6', sky2: '#f0dcb2', top: '#e8d3a2', edge: '#b88a63' },
-};
-const groundOf = (i?: Interest) => (i === 'cooking' || i === 'tech' ? GROUNDS.wood : i === 'cars' ? GROUNDS.sand : GROUNDS.grass);
+/** Each person's colour in town: their trail, their name tag's icon. */
+const COLOURS = ['#6b9a5b', '#8a5aa8', '#4f7fb0', '#d9903e', '#c4664f', '#3f9ea0'];
+
+/** What kind of building a place is, from its name (English or Danish). */
+const KINDS: Array<[PlaceKind, RegExp]> = [
+  ['kindergarten', /vuggestue|børnehave|bornehave|dagpleje|daycare|nursery|kindergarten|mælkebøtte/],
+  ['school', /skole|school|sfo|gymnasi|universit|college/],
+  ['field', /fodbold|football|soccer|stadion|stadium|padel|tennis|sport|hallen|idræt|svøm|swim|gym\b|fitness/],
+  ['family', /mormor|morfar|farmor|farfar|momo|mofa|fafa|bedste|grandma|grandpa|granny|nana|forældre|svigerforældre/],
+  ['shop', /netto|føtex|bilka|rema|lidl|aldi|super|shop|store|brugsen|meny|coop|kvickly|spar\b|center/],
+  ['garden', /plantorama|planteskole|gartneri|garden|plant/],
+  ['office', /arbejde|work|job|kontor|office|firma/],
+];
+const kindOf = (name: string): PlaceKind => KINDS.find(([, re]) => re.test(name.toLowerCase()))?.[0] ?? 'generic';
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9æøå]+/g, ' ').trim();
+/** The house view's card, as the town asks it for the house. */
+type HouseCard = HTMLElement & { setConfig(c: unknown): void; hass?: unknown; houseState(): SceneState };
+/** "Fodbold" out of "Pelle: Fodbold". */
+const what = (summary: string) => summary.replace(/^[^:]{1,24}:\s*/, '');
 
 /**
- * The family as a card each: a portrait of their figurine close up, their name, where they are, their
- * phone's battery and what's next in their calendar, in the colours of their diorama. Tapping a card
- * pulls the camera back from their face to show them on their island, with all their details.
+ * The family in a little town of square plots: the house from the house view in the middle, the places
+ * they go (Home Assistant's zones and the places in their calendars) as buildings round it, what they
+ * love as little scenes in a park and on a square. Everyone stands where they are and walks there along
+ * the roads when they move; a dotted trail shows where they go next. Tapping someone zooms in on them,
+ * with their details (and what they love: tap to fly there) along the bottom.
  */
 export class HyggePeople3dCard extends WorldCard<People3dCardConfig> {
   @state() private events: Record<number, CalEvent[] | undefined> = {};
-  /** Inside someone's room, their details are chips along the bottom, so the room stays in view. */
+  /** Their details as chips along the bottom, so the town stays in view. */
   protected override dock = true;
-  /** The calendar opened from the chip in someone's room. */
+  /** Several at home stand close together; their names stack rather than cover each other. */
+  protected override spreadLabels = true;
+  /** The calendar opened from its chip. */
   @state() private calOpen = false;
   private eventsFor?: string;
 
   static getStubConfig() {
-    return { people: [{ entity: 'person.me', avatar: { preset: 'man' }, interests: ['cooking'] }] };
+    return { people: [{ entity: 'person.me', avatar: { preset: 'man' } }] };
   }
 
   protected override validateConfig(c: People3dCardConfig) {
@@ -54,12 +85,12 @@ export class HyggePeople3dCard extends WorldCard<People3dCardConfig> {
   }
 
   protected override watchedEntities() {
-    return this.config.people.flatMap(p => [p.entity, p.battery, p.charging, p.distance, p.sleep, ...calendars(p), ...(p.stats ?? []).map(s => s.entity)]);
+    return [...this.config.people.flatMap(p => [p.entity, p.battery, p.charging, p.distance, p.sleep, ...calendars(p), ...(p.stats ?? []).map(s => s.entity)]), this.weatherId()];
   }
 
   protected override updated(changed: PropertyValues) {
     super.updated(changed);
-    // Calendars: what each person is doing now fills in where GPS can't, and the details list what's next.
+    // Calendars: where each person is when GPS can't say, and where they go next.
     const key = this.config.people.map(p => calendars(p).join(',')).join(';');
     if (this.hass && key !== this.eventsFor) {
       this.eventsFor = key;
@@ -78,34 +109,181 @@ export class HyggePeople3dCard extends WorldCard<People3dCardConfig> {
     return status(this.hass, this.config.people[i], this.events[i]);
   }
 
-  protected override createWorld(mod: WorldModule, canvas: HTMLCanvasElement, onLabels: (l: StageLabel[]) => void, dpr: number) {
-    return new mod.PeopleScene(canvas, onLabels, dpr);
+  private weatherId(): string | undefined {
+    if (this.config.weather) return this.config.weather;
+    const ids = Object.keys(this.hass?.states ?? {}).filter(id => id.startsWith('weather.'));
+    return ids.includes('weather.forecast_home') ? 'weather.forecast_home' : ids.sort()[0];
   }
 
-  protected override worldState(): PeopleState {
+  // ---------- the town's places, and who is where ----------
+
+  /**
+   * Where each person is, where they go next, and the places the town needs: first those people are at
+   * or going to, then the configured ones, then the rest of Home Assistant's zones; at most seven.
+   */
+  private town() {
+    const places: TownPlace[] = [];
+    const find = (name: string) => {
+      const n = norm(name);
+      if (n.length < 2) return undefined;
+      return places.find(pl => {
+        const m = norm(pl.name);
+        return m === n || (m.length >= 3 && n.includes(m)) || (n.length >= 3 && m.includes(n));
+      });
+    };
+    // The kind configured for a place counts wherever the place comes from (a zone, a calendar).
+    const configured = (name: string) => (this.config.places ?? []).find(pl => pl.kind && norm(pl.name) === norm(name))?.kind;
+    const add = (name: string | undefined, kind?: PlaceKind) => {
+      if (!name || name.toLowerCase() === 'home' || name === 'not_home') return undefined;
+      const hit = find(name);
+      if (hit) return hit.key;
+      if (places.length >= 7) return undefined;
+      const key = `pl-${norm(name).replace(/ /g, '-')}`;
+      places.push({ key, name, kind: kind ?? configured(name) ?? kindOf(name) });
+      return key;
+    };
+    const zones = Object.values(this.hass?.states ?? {})
+      .filter(e => e.entity_id.startsWith('zone.') && e.entity_id !== 'zone.home')
+      .map(e => String(e.attributes.friendly_name ?? e.entity_id.slice(5)));
+    const soon = Date.now() + 24 * 3600e3;
+    const people = this.config.people.map((p, i) => {
+      const st = this.statusOf(i);
+      const gps = p.entity ? this.hass?.states[p.entity]?.state : undefined;
+      const ev = this.events[i];
+      const { now, upcoming } = ev ? nowAndNext(ev) : { now: undefined, upcoming: [] as CalEvent[] };
+      let where = 'home';
+      if (st.asleep || st.presence === 'home' || st.presence === 'none') where = 'home';
+      else if (st.presence === 'away') where = 'away';
+      else if (!st.fromPlan && gps) where = add(zones.find(z => norm(z) === norm(gps)) ?? gps) ?? 'away';
+      else if (now) where = add(shortPlace(now.location) || what(now.summary)) ?? 'away';
+      else if (p.default_location) where = add(p.default_location) ?? 'away';
+      const nextEv = upcoming.find(e => e.start.getTime() < soon && shortPlace(e.location));
+      return { p, i, st, where, nextEv };
+    });
+    // Where they go next, if it has a place (it becomes one).
+    const nexts = people.map(x => (x.nextEv ? add(shortPlace(x.nextEv.location)) : undefined));
+    for (const pl of this.config.places ?? []) add(pl.name, pl.kind);
+    for (const z of zones) add(z);
+    places.sort((a, b) => a.name.localeCompare(b.name));
+    return { places, people, nexts };
+  }
+
+  protected override createWorld(mod: WorldModule, canvas: HTMLCanvasElement, onLabels: (l: StageLabel[]) => void, dpr: number) {
+    const town = new mod.TownScene(canvas, onLabels, dpr);
+    this.townReady = town.load(String(this.config.house?.model ?? mod.DEFAULT_MODEL)).catch(err => console.warn('HyggeHub: the house for the town did not load', err));
+    return town;
+  }
+
+  private townReady?: Promise<void>;
+  /** A house card that is never shown, kept to work out the house as the house view shows it. */
+  private houseCard?: HouseCard;
+
+  /** Resolves when the town has its house (a tab switch waits for it, so the change is seamless). */
+  override async whenReady() {
+    await super.whenReady();
+    await this.townReady;
+  }
+
+  /** The house as the house view shows it, or a plain one when there are no house settings. */
+  private houseState(): SceneState {
+    const c = this.config.house;
+    if (c && !this.houseCard) {
+      const el = document.createElement('hyggehub-energy-3d-card') as HouseCard;
+      try {
+        el.setConfig({ ...c, type: 'custom:hyggehub-energy-3d-card' });
+        this.houseCard = el;
+      } catch {
+        // Settings the house view rejects: the plain house below.
+      }
+    }
+    if (this.houseCard) {
+      this.houseCard.hass = this.hass;
+      try {
+        return this.houseCard.houseState();
+      } catch {
+        // Fall through to the plain house.
+      }
+    }
+    const look = this.look();
+    const wid = this.weatherId();
     return {
-      ...this.look(),
-      people: this.config.people.map((p, i) => {
-        const st = this.statusOf(i);
-        const name = this.name(p).toLowerCase().normalize('NFD').replace(/[^a-z0-9]+/g, '');
-        return { key: `p${i}`, ...avatarColours(p.avatar), interests: interestsOf(p.interests), model: p.model, name, home: st.presence === 'home', asleep: st.asleep };
-      }),
-      cells: () => this.cells(),
+      flows: { grid: null, solar: null, car: null, water: null },
+      colors: { grid: '#4aa8ff', solar: '#ffb13d', car: '#4fdc8c', water: '#5ec2f0' },
+      night: look.night,
+      facing: 180,
+      weather: weatherFrom(wid ? this.hass?.states[wid] : undefined),
+      car: null,
+      hidden: ['solar'],
+      bins: null,
+      driveLights: look.night > 0.5 ? 1 : 0,
+      motion: look.motion,
+      fogColor: getComputedStyle(this).getPropertyValue('--hh-bg').trim() || '#dce3e5',
     };
   }
 
-  /** Where the cards are on the canvas, for the scene to draw each portrait into. */
-  private cells() {
-    const canvas = this.renderRoot.querySelector('canvas');
-    if (!canvas) return [];
-    const c = canvas.getBoundingClientRect();
-    return [...this.renderRoot.querySelectorAll<HTMLElement>('.bgs .cell')].map(el => {
-      const r = el.getBoundingClientRect();
-      return { x: r.left - c.left, y: r.top - c.top, w: r.width, h: r.height };
+  protected override worldState(): TownState | TownBits {
+    const { places, people, nexts } = this.town();
+    // (Through a variable: Vite would otherwise take new URL(…, import.meta.url) for an asset to bundle.)
+    const here = import.meta.url;
+    return {
+      // Over the house view's own scene, the house is that card's to draw.
+      ...(this.external ? {} : this.houseState()),
+      places,
+      people: people.map(({ p, i, st, where, nextEv }) => {
+        const look = avatarColours(p.avatar);
+        const slug = this.name(p).toLowerCase().normalize('NFD').replace(/[^a-z0-9]+/g, '');
+        return {
+          key: `p${i}`,
+          name: this.name(p),
+          colour: COLOURS[i % COLOURS.length],
+          skin: look.skin,
+          hair: look.hair,
+          shirt: look.shirt,
+          preset: look.preset,
+          model: p.model ?? new URL('people/' + slug + '.glb', here).href,
+          at: where,
+          asleep: st.asleep,
+          next: nextEv ? nexts[i] : undefined,
+          interests: interestsOf(p.interests),
+        };
+      }),
+    };
+  }
+
+  /** Over each person, their name, where they are and their battery; tap for their details. */
+  protected override labels(): WorldLabel[] {
+    const { places, people } = this.town();
+    return people.map(({ p, i, st, where }) => {
+      const bat = battery(this.hass, p);
+      // At home the house says where they are; the caption is just their battery.
+      const placeName = st.asleep ? 'Asleep' : where === 'home' ? '' : where === 'away' ? 'Out' : (places.find(x => x.key === where)?.name ?? st.label);
+      return {
+        key: `p${i}`,
+        value: this.name(p),
+        caption: [placeName, bat ? `${bat.level}%${bat.charging ? ' ⚡' : ''}` : ''].filter(Boolean).join(' · ') || 'Home',
+        icon: st.asleep ? MOON : where === 'home' ? HOME : PIN,
+        color: COLOURS[i % COLOURS.length],
+      };
     });
   }
 
-  /** Opening a card walks into it. */
+  /** Over each place its name, and what's on there next and for whom. */
+  protected override renderStageExtras() {
+    const { places, people, nexts } = this.town();
+    return html`${places.map(pl => {
+      const going = people.filter(x => x.nextEv && nexts[x.i] === pl.key && x.where !== pl.key);
+      const first = going[0];
+      return html`<div class="tag spot" data-key=${pl.key} aria-hidden="true">
+        ${first ? html`<span class="dot" style="background:${COLOURS[first.i % COLOURS.length]}"></span>` : nothing}
+        <span class="txt"
+          ><b>${pl.name}</b>${first
+            ? html`<small>${this.name(first.p)} · ${what(first.nextEv!.summary)} · ${whenText(first.nextEv!, false, this.hass)}${going.length > 1 ? ` +${going.length - 1}` : ''}</small>`
+            : nothing}</span
+        >
+      </div>`;
+    })}`;
+  }
+
   protected override openDetail(key: string) {
     this.calOpen = false;
     super.openDetail(key);
@@ -116,60 +294,10 @@ export class HyggePeople3dCard extends WorldCard<People3dCardConfig> {
     super.closeDetail();
   }
 
-  /** No labels in the scene: the cards carry the names. */
-  protected override labels(): WorldLabel[] {
-    return [];
-  }
-
-  /**
-   * A card per person, in two layers: the backgrounds (sky, and the ground in layers like the edge of
-   * their diorama) under the canvas, where the scene draws their portrait; their name, where they are,
-   * battery and what's next over it.
-   */
-  protected override renderStageExtras() {
-    const people = this.config.people;
-    const n = people.length;
-    const ground = (i: number) => groundOf(interestsOf(people[i].interests)[0]);
-    const vars = (i: number) => {
-      const g = ground(i);
-      return `--i:${i};--sky:${g.sky};--sky2:${g.sky2};--top:${g.top};--edge:${g.edge}`;
-    };
-    return html`
-      <div class="deck" data-n=${Math.min(n, 4)}>
-        <div class="grid bgs" aria-hidden="true">
-          ${people.map((_, i) => html`<div class="cell" style=${vars(i)}><i class="sheen"></i><i class="mote"></i><i class="mote m2"></i><span class="ground"><b></b><b></b><b></b></span></div>`)}
-        </div>
-        <div class="grid fgs">
-          ${people.map((p, i) => {
-            const st = this.statusOf(i);
-            const bat = battery(this.hass, p);
-            const place = st.asleep ? 'Asleep' : st.label.split(' · ')[0];
-            const ev = this.events[i];
-            const { now, upcoming } = ev ? nowAndNext(ev) : { now: undefined, upcoming: [] as CalEvent[] };
-            const next = now ?? upcoming[0];
-            const kind = st.asleep ? 'sleep' : st.presence === 'home' ? 'home' : 'away';
-            return html`<button type="button" class="cell ${kind}" style=${vars(i)} aria-haspopup="dialog" @click=${() => this.openDetail(`p${i}`)}>
-              <span class="info">
-                <span class="line">
-                <b class="name">${this.name(p)}</b>
-                <span class="meta">
-                  <span><svg viewBox="0 0 24 24" class="i"><path d=${PIN}></path></svg>${place}</span>
-                  ${bat ? html`<span class=${bat.level <= 20 ? 'low' : ''}><svg viewBox="0 0 24 24" class="i"><path d=${BATTERY}></path></svg><span class="num">${bat.level}%</span>${bat.charging ? '⚡' : ''}</span>` : nothing}
-                </span>
-                </span>
-                ${next ? html`<small class="next"><svg viewBox="0 0 24 24" class="i"><path d=${CAL}></path></svg>${next === now ? 'Now: ' : ''}${next.summary}${next === now ? '' : html` · <span class="num">${whenText(next, false, this.hass)}</span>`}</small>` : nothing}
-              </span>
-            </button>`;
-          })}
-        </div>
-      </div>
-    `;
-  }
-
   /** Who's home, as a chip like the weather on the house. */
   protected override renderHeaderExtras() {
     const sts = this.config.people.map((_, i) => this.statusOf(i));
-    const home = sts.filter(s => s.presence === 'home').length;
+    const home = sts.filter(s => s.presence === 'home' || s.asleep).length;
     const n = sts.length;
     const text = home === n ? 'All home' : home === 0 ? 'Nobody home' : `${home} of ${n} home`;
     return html`<span class="weather"><svg viewBox="0 0 24 24" class="i" style="color:${home ? 'var(--hh-ok)' : 'var(--hh-ink-3)'}"><path d=${HOME}></path></svg><b>${text}</b></span>`;
@@ -188,8 +316,7 @@ export class HyggePeople3dCard extends WorldCard<People3dCardConfig> {
     const ev = this.events[i];
     const { now, upcoming } = ev ? nowAndNext(ev) : { now: undefined, upcoming: [] as CalEvent[] };
     const icon = (d: string) => html`<svg viewBox="0 0 24 24" class="i"><path d=${d}></path></svg>`;
-    // History of where they've been (their person entity), or else of their phone; only one that exists
-    // (Home Assistant opens nothing for an entity it doesn't have).
+    // History of where they've been (their person entity), or else of their phone; only one that exists.
     const history = [p.entity, p.battery].find(id => id && this.hass?.states[id]);
     const next = now ?? upcoming[0];
     const agenda = [...(now ? [now] : []), ...upcoming.slice(0, p.agenda ?? 6)];
@@ -222,64 +349,36 @@ export class HyggePeople3dCard extends WorldCard<People3dCardConfig> {
     glass,
     worldStyles,
     css`
-      /* The canvas sits between the cards' backgrounds and their text. */
-      .stage {
-        isolation: isolate;
-      }
-      .deck {
-        position: absolute;
-        inset: 0;
-        container: deck / size;
+      /* The places' names: quieter than the people's, and not to be tapped. */
+      .tag.spot {
         pointer-events: none;
+        padding: 3px 10px;
+        gap: 6px;
+        background: color-mix(in srgb, var(--hh-glass-strong) 80%, transparent);
+        box-shadow: none;
       }
-      .grid {
-        position: absolute;
-        inset: 0;
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        grid-auto-rows: 1fr;
-        gap: 0;
-        transition: opacity 0.35s var(--ease) 1.05s;
+      .ready .tag.spot {
+        opacity: 0.92;
       }
-      .bgs {
-        z-index: -1;
-      }
-      .fgs {
-        z-index: 1;
-      }
-      .deck[data-n='1'] .grid {
-        grid-template-columns: 1fr;
-      }
-      .deck[data-n='3'] .cell:last-child {
-        grid-column: span 2;
-      }
-      @container deck (min-aspect-ratio: 2.3) {
-        .deck[data-n='3'] .grid {
-          grid-template-columns: repeat(3, 1fr);
-        }
-        .deck[data-n='4'] .grid {
-          grid-template-columns: repeat(4, 1fr);
-        }
-        .deck[data-n='3'] .cell:last-child {
-          grid-column: auto;
-        }
-      }
-      @container deck (max-aspect-ratio: 0.8) {
-        .deck[data-n='2'] .grid {
-          grid-template-columns: 1fr;
-        }
-      }
-      /* Opened: the cards step back while the person's picture grows to fill the view. */
-      /* Inside a room the (faded) cards don't catch taps. */
-      .focused .fgs .cell {
-        pointer-events: none;
-      }
-      .focused .grid {
+      .ready .tag.spot.off {
         opacity: 0;
-        pointer-events: none;
-        transition: opacity 0.2s var(--ease);
       }
-      /* The calendar, opened from its chip, over the chips. */
+      .tag.spot b {
+        font-size: 11.5px;
+      }
+      .tag.spot small {
+        text-transform: none;
+        letter-spacing: 0;
+        font-size: 10.5px;
+        font-weight: 500;
+        color: var(--hh-ink-2);
+      }
+      .tag.spot .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex: none;
+      }
       .calpop {
         position: absolute;
         bottom: calc(100% + 10px);
@@ -311,260 +410,6 @@ export class HyggePeople3dCard extends WorldCard<People3dCardConfig> {
         border-radius: 50%;
         color: var(--hh-ink-2);
       }
-      .name .dot {
-        display: inline-block;
-        width: 9px;
-        height: 9px;
-        margin: 0 7px 2px 0;
-        border-radius: 50%;
-        background: var(--hh-ok);
-        vertical-align: middle;
-      }
-      .name .dot.away {
-        background: #3ba9d6;
-      }
-      .name .dot.sleep {
-        background: #8f9bd6;
-      }
-      .cell {
-        position: relative;
-        border-radius: 0;
-        overflow: hidden;
-        min-width: 0;
-        min-height: 0;
-      }
-      .bgs .cell {
-        background:
-          radial-gradient(120% 80% at 50% 18%, rgba(255, 255, 255, 0.55), transparent 60%),
-          linear-gradient(180deg, color-mix(in srgb, var(--sky) 88%, var(--hh-glass-strong)), color-mix(in srgb, var(--sky2) 88%, var(--hh-glass-strong)));
-      }
-      /* The ground at the bottom in layers, like the edge of the diorama: its top, the earth, the base. */
-      .ground {
-        position: absolute;
-        left: -2px;
-        right: -2px;
-        bottom: -2px;
-        height: 24%;
-        display: flex;
-        flex-direction: column;
-      }
-      .ground b {
-        display: block;
-        border-radius: 14px 14px 0 0;
-      }
-      .ground b:nth-child(1) {
-        flex: 1;
-        background: linear-gradient(180deg, color-mix(in srgb, var(--top) 85%, #fff), var(--top));
-        box-shadow: 0 -6px 18px color-mix(in srgb, var(--top) 40%, transparent);
-      }
-      .ground b:nth-child(2) {
-        height: 18%;
-        background: var(--edge);
-        border-radius: 0;
-      }
-      .ground b:nth-child(3) {
-        height: 22%;
-        background: #4b4440;
-        border-radius: 0;
-      }
-      /* A slow sweep of light across the card, and two motes drifting up. */
-      .sheen {
-        position: absolute;
-        inset: -40%;
-        background: linear-gradient(115deg, transparent 42%, rgba(255, 255, 255, 0.35) 50%, transparent 58%);
-        transform: translateX(-60%);
-      }
-      .mote {
-        position: absolute;
-        left: 18%;
-        bottom: 30%;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: radial-gradient(circle, rgba(255, 255, 255, 0.9), transparent 70%);
-        opacity: 0;
-      }
-      .mote.m2 {
-        left: 78%;
-        width: 6px;
-        height: 6px;
-      }
-      @media (prefers-reduced-motion: no-preference) {
-        .sheen {
-          animation: sweep 9s ease-in-out infinite;
-          animation-delay: calc(var(--i) * 1.7s);
-        }
-        .mote {
-          animation: drift 7s ease-in-out infinite;
-          animation-delay: calc(var(--i) * 1.3s);
-        }
-        .mote.m2 {
-          animation-delay: calc(var(--i) * 1.3s + 3.2s);
-        }
-        .cell {
-          animation: rise 0.7s var(--spring, ease) both;
-          animation-delay: calc(var(--i) * 0.09s);
-        }
-      }
-      @keyframes sweep {
-        0%,
-        70% {
-          transform: translateX(-60%);
-        }
-        100% {
-          transform: translateX(60%);
-        }
-      }
-      @keyframes drift {
-        0% {
-          opacity: 0;
-          transform: translateY(0);
-        }
-        30% {
-          opacity: 0.9;
-        }
-        100% {
-          opacity: 0;
-          transform: translateY(-120px);
-        }
-      }
-      @keyframes rise {
-        from {
-          opacity: 0;
-          transform: translateY(18px) scale(0.96);
-        }
-      }
-      /* The text over the portrait. */
-      .fgs .cell {
-        display: flex;
-        flex-direction: column;
-        justify-content: flex-end;
-        align-items: stretch;
-        padding: 12px;
-        text-align: left;
-        pointer-events: auto;
-        color: var(--hh-ink);
-        transition: transform 0.35s var(--spring), box-shadow 0.35s;
-      }
-      .fgs .cell:hover .info,
-      .fgs .cell:focus-visible .info {
-        background: var(--hh-surface, #fbfaf8);
-      }
-      .fgs .cell:active {
-        transform: scale(0.98);
-      }
-      .status {
-        align-self: flex-start;
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-        padding: 4px 10px 4px 7px;
-        border-radius: 999px;
-        font-size: 11.5px;
-        font-weight: 600;
-        background: var(--hh-glass-strong);
-        -webkit-backdrop-filter: blur(10px);
-        backdrop-filter: blur(10px);
-        border: 1px solid var(--hh-stroke);
-      }
-      .status .i {
-        width: 14px;
-        height: 14px;
-      }
-      .home .status .i {
-        color: var(--hh-ok);
-      }
-      .away .status .i {
-        color: #3ba9d6;
-      }
-      .sleep .status .i {
-        color: #8f9bd6;
-      }
-      .info {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        align-self: flex-start;
-        max-width: 100%;
-        padding: 7px 14px 8px;
-        border-radius: 16px;
-        background: color-mix(in srgb, var(--hh-surface, #fbfaf8) 86%, transparent);
-        -webkit-backdrop-filter: blur(14px) saturate(160%);
-        backdrop-filter: blur(14px) saturate(160%);
-        border: 1px solid var(--hh-stroke);
-        box-shadow: var(--hh-shadow);
-        min-width: 0;
-      }
-      .line {
-        display: flex;
-        align-items: baseline;
-        flex-wrap: wrap;
-        gap: 2px 12px;
-      }
-      .name {
-        font-size: 17px;
-        font-weight: 700;
-        line-height: 1.1;
-      }
-      .meta {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 4px 12px;
-        font-size: 12.5px;
-        font-weight: 600;
-        color: var(--hh-ink-2);
-      }
-      .meta > span {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        min-width: 0;
-      }
-      .meta .i,
-      .next .i {
-        width: 14px;
-        height: 14px;
-        flex: none;
-        opacity: 0.8;
-      }
-      .meta .low {
-        color: #d9473f;
-      }
-      .next {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        font-size: 11.5px;
-        color: var(--hh-ink-3);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      @container deck (max-width: 520px) {
-        .name {
-          font-size: 15px;
-        }
-        .info {
-          padding: 8px 10px;
-        }
-        .meta {
-          font-size: 11.5px;
-        }
-        .next {
-          display: none;
-        }
-        .fgs .cell {
-          padding: 8px;
-        }
-      }
-      .sub {
-        margin: 14px 0 2px;
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        color: var(--hh-ink-3);
-      }
       .agenda li.now span {
         font-weight: 600;
       }
@@ -577,4 +422,4 @@ export class HyggePeople3dCard extends WorldCard<People3dCardConfig> {
   ];
 }
 
-registerCard('hyggehub-people-3d-card', HyggePeople3dCard, 'HyggeHub People 3D', 'The family as figurines on little dioramas of what they love, with who is home at the top.');
+registerCard('hyggehub-people-3d-card', HyggePeople3dCard, 'HyggeHub People 3D', 'The family in a little town: their house, the places they go, everyone where they are.');

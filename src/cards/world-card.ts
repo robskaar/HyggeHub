@@ -14,9 +14,13 @@ export interface World {
   stop(): void;
   renderOnce(): void;
   resize(w: number, h: number): void;
-  focus(key: string | null, side?: 'right' | 'bottom'): void;
+  focus(key: string | null, side?: 'right' | 'bottom' | 'centre'): void;
   intro(): void;
+  /** The view closing: an animation out, resolved when it is done (views without one resolve at once). */
+  outro?(): Promise<void>;
   dispose(): void;
+  /** Another view's labels over the same scene. */
+  listen?(fn: (labels: StageLabel[]) => void): void;
 }
 
 export type WorldModule = typeof import('./energy-3d/worlds');
@@ -59,6 +63,8 @@ export abstract class WorldCard<C extends WorldCardConfig> extends HyggeCard<C> 
   private onEngine = () => this.push();
   /** True while the card shows something else in place of the scene (the countdowns' timeline). */
   private hidden3d = false;
+  /** Drawn by another card (the home card's house): this card is only its labels and details over it. */
+  @state() protected external = false;
 
   protected abstract createWorld(mod: WorldModule, canvas: HTMLCanvasElement, onLabels: (l: StageLabel[]) => void, pixelRatio: number): World;
   protected abstract worldState(): unknown;
@@ -70,6 +76,11 @@ export abstract class WorldCard<C extends WorldCardConfig> extends HyggeCard<C> 
    * the scene behind them stays in view. The view's details then return chips.
    */
   protected dock = false;
+  /**
+   * Labels that would cover each other step up out of the way: those lowest on screen (nearest) stay,
+   * the others stack above them; places (`.tag.spot`) give way to everything else.
+   */
+  protected spreadLabels = false;
   /** Re-render this often while shown, e.g. every second for a countdown. Default: once a minute. */
   protected tickEvery = 60_000;
 
@@ -89,6 +100,7 @@ export abstract class WorldCard<C extends WorldCardConfig> extends HyggeCard<C> 
     super.disconnectedCallback();
     engine.removeEventListener('change', this.onEngine);
     clearInterval(this.ticker);
+    if (this.external) return;
     this.world?.stop();
     // Keep the WebGL context briefly (Home Assistant re-attaches cards when switching views), not forever.
     this.disposeTimer = window.setTimeout(() => {
@@ -121,7 +133,20 @@ export abstract class WorldCard<C extends WorldCardConfig> extends HyggeCard<C> 
     if (this.world && this.config) this.world.setState(this.worldState());
   }
 
+  /**
+   * Puts this view over a scene another card draws (the home card's house, which grows the town): no
+   * canvas of its own, just its labels and details, which don't block the scene below.
+   */
+  attach(world: World & { listen(fn: (labels: StageLabel[]) => void): void }) {
+    this.external = true;
+    this.world = world;
+    this.loading = Promise.resolve();
+    world.listen(l => this.placeLabels(l));
+    this.push();
+  }
+
   private init(): Promise<void> {
+    if (this.external) return Promise.resolve();
     return (this.loading ??= (async () => {
       const canvas = this.renderRoot.querySelector('canvas');
       if (!canvas) return;
@@ -155,6 +180,7 @@ export abstract class WorldCard<C extends WorldCardConfig> extends HyggeCard<C> 
   }
 
   private resume() {
+    if (this.external) return;
     if (!this.world) {
       if (this.isConnected && !this.failed) void this.init();
       return;
@@ -168,10 +194,26 @@ export abstract class WorldCard<C extends WorldCardConfig> extends HyggeCard<C> 
   }
 
   private placeLabels(labels: StageLabel[]) {
-    for (const l of labels) {
-      const el = this.renderRoot.querySelector<HTMLElement>(`.tag[data-key="${CSS.escape(l.key)}"]`);
-      if (!el) continue;
-      el.style.transform = `translate(${l.x}px, ${l.y}px) translate(-50%, -50%)`;
+    const tags = labels
+      .map(l => ({ l, y: l.y, el: this.renderRoot.querySelector<HTMLElement>(`.tag[data-key="${CSS.escape(l.key)}"]`) }))
+      .filter((t): t is { l: StageLabel; y: number; el: HTMLElement } => !!t.el);
+    if (this.spreadLabels) {
+      // Sizes first, then positions, so the layout is read once.
+      const sized = tags.map(t => ({ t, w: t.el.offsetWidth, h: t.el.offsetHeight, spot: t.el.classList.contains('spot') }));
+      sized.sort((a, b) => Number(a.spot) - Number(b.spot) || b.t.l.y - a.t.l.y);
+      const placed: Array<{ x: number; y: number; w: number; h: number }> = [];
+      for (const s of sized) {
+        if (!s.t.l.visible) continue;
+        for (let k = 0; k < 8; k++) {
+          const hit = placed.find(r => Math.abs(r.x - s.t.l.x) < (r.w + s.w) / 2 + 4 && Math.abs(r.y - s.t.y) < (r.h + s.h) / 2 + 2);
+          if (!hit) break;
+          s.t.y = hit.y - (hit.h + s.h) / 2 - 3;
+        }
+        placed.push({ x: s.t.l.x, y: s.t.y, w: s.w, h: s.h });
+      }
+    }
+    for (const { l, y, el } of tags) {
+      el.style.transform = `translate(${l.x}px, ${y}px) translate(-50%, -50%)`;
       el.classList.toggle('off', !l.visible);
     }
   }
@@ -186,7 +228,8 @@ export abstract class WorldCard<C extends WorldCardConfig> extends HyggeCard<C> 
 
   protected openDetail(key: string) {
     this.detail = key;
-    this.world?.focus(key, this.compact ? 'bottom' : 'right');
+    // Docked details are a row of chips along the bottom: the spot stays (just above) the middle.
+    this.world?.focus(key, this.dock ? 'centre' : this.compact ? 'bottom' : 'right');
   }
 
   protected closeDetail() {
@@ -209,6 +252,17 @@ export abstract class WorldCard<C extends WorldCardConfig> extends HyggeCard<C> 
     this.world?.intro();
   }
 
+  /** The view closing, as when another tab opens: its animation out, if it has one. */
+  async outro() {
+    await this.world?.outro?.();
+  }
+
+  /** Resolves when the scene is up (or has given up), so a tab switch can wait for it. */
+  async whenReady() {
+    await this.updateComplete;
+    await this.init();
+  }
+
   protected glyph(icon: string) {
     return icon.startsWith('mdi:') ? haIcon(icon) : html`<svg viewBox="0 0 24 24" class="i"><path d=${icon}></path></svg>`;
   }
@@ -219,10 +273,12 @@ export abstract class WorldCard<C extends WorldCardConfig> extends HyggeCard<C> 
     const labels = this.labels();
     const detail = this.detail ? labels.find(l => l.key === this.detail) : undefined;
     return html`
-      <ha-card class=${classMap({ glass: true, embedded: !!c.embedded, docked: this.dock })}>
-        <div class=${classMap({ stage: true, focused: !!this.detail })} style=${c.embedded ? 'height:100%' : `height:${c.height ?? 380}px`}>
-          <canvas role="img" aria-label=${labels.map(l => `${l.caption} ${l.value}`).join(', ')}></canvas>
-          <div class="loading" aria-hidden="true"></div>
+      <ha-card class=${classMap({ glass: true, embedded: !!c.embedded, docked: this.dock, over: this.external })}>
+        <div class=${classMap({ stage: true, focused: !!this.detail, ready: this.external })} style=${c.embedded ? 'height:100%' : `height:${c.height ?? 380}px`}>
+          ${this.external
+            ? nothing
+            : html`<canvas role="img" aria-label=${labels.map(l => `${l.caption} ${l.value}`).join(', ')}></canvas>
+                <div class="loading" aria-hidden="true"></div>`}
           ${this.renderStageExtras()}
           ${labels.map(
             l => html`<button type="button" class="tag" data-key=${l.key} @click=${() => this.openDetail(l.key)} aria-haspopup="dialog">

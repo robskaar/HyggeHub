@@ -1,6 +1,6 @@
 // What every 3D view beyond the house shares: a renderer, the clay look, day and night light, a camera
 // the viewer can swing by dragging, zooming in on one spot while details are open, and the screen
-// positions of the labels. A view builds its own models on top (see people.ts and countdowns.ts).
+// positions of the labels. A view builds its own models on top (see town.ts and countdowns.ts).
 import {
   ACESFilmicToneMapping,
   Box3,
@@ -87,11 +87,12 @@ export function mergeStatic(root: Object3D) {
   }
   for (const [material, meshes] of byMaterial) {
     if (meshes.length < 2) continue;
-    const geos = meshes.map(m => {
+    let geos = meshes.map(m => {
       m.updateMatrix();
-      const g = m.geometry.index ? m.geometry.clone() : m.geometry.clone();
-      return g.applyMatrix4(m.matrix);
+      return m.geometry.clone().applyMatrix4(m.matrix);
     });
+    // Indexed and unindexed shapes (rounded boxes and extrusions) only merge once all are unindexed.
+    if (geos.some(g => g.index) && geos.some(g => !g.index)) geos = geos.map(g => (g.index ? g.toNonIndexed() : g));
     let merged: BufferGeometry | null = null;
     try {
       merged = mergeGeometries(geos);
@@ -142,6 +143,8 @@ export abstract class ClayStage {
   protected camDistance = 30;
   /** How far the camera is from a focused spot; unset: a little over half the usual distance. */
   protected focusDistance?: number;
+  /** The camera's angle above the ground on a focused spot; unset: a little above the usual. */
+  protected focusElevation?: number;
   private yaw = 0;
   private yawVelocity = 0;
   private dragging = false;
@@ -152,7 +155,7 @@ export abstract class ClayStage {
   private focusPoint = new Vector3();
   private focusOn = false;
   private focusEase = 0;
-  private focusSide: 'right' | 'bottom' = 'right';
+  private focusSide: 'right' | 'bottom' | 'centre' = 'right';
   private lastLabels = '';
   /** 1 right after the view appears, easing to 0: the camera glides in. */
   private introT = 0;
@@ -163,8 +166,7 @@ export abstract class ClayStage {
     pixelRatio: number,
   ) {
     // Throws when WebGL is unavailable; the card shows a message instead.
-    // A stencil buffer for views that cut their pictures to a shape (the people's rounded cards).
-    const r = new WebGLRenderer({ canvas, antialias: true, alpha: true, stencil: true, powerPreference: 'low-power' });
+    const r = new WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'low-power' });
     this.renderer = r;
     r.setPixelRatio(pixelRatio);
     r.setClearColor(0x000000, 0);
@@ -192,6 +194,18 @@ export abstract class ClayStage {
     this.scene.environmentIntensity = 0.28;
     pmrem.dispose();
     this.bindPointer();
+  }
+
+  /** How far from the middle shadows are cast, for views larger than one island. */
+  protected shadowReach(r: number) {
+    const sc = this.sun.shadow.camera;
+    sc.left = sc.bottom = -r;
+    sc.right = sc.top = r;
+    sc.far = 90;
+    sc.updateProjectionMatrix();
+    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.map?.dispose();
+    this.sun.shadow.map = null;
   }
 
   /** A label's spot was focused (or null: unfocused). Views can react, e.g. a figure waving. */
@@ -261,7 +275,7 @@ export abstract class ClayStage {
   }
 
   /** Zoom in on a label's spot while the card shows its details on `side`; null zooms back out. */
-  focus(key: string | null, side: 'right' | 'bottom' = 'right') {
+  focus(key: string | null, side: 'right' | 'bottom' | 'centre' = 'right') {
     const node = key ? this.anchors.get(key) : undefined;
     if (node && key) this.focusAt(key, node, this.focusPoint);
     this.focusOn = !!node;
@@ -297,7 +311,7 @@ export abstract class ClayStage {
     const vfov = MathUtils.degToRad(this.camera.fov);
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * aspect);
     this.camDistance = this.framing.radius / Math.sin(Math.min(vfov, hfov) / 2);
-    this.camera.near = Math.max(0.3, this.camDistance - 40);
+    this.camera.near = Math.max(0.3, Math.min(this.camDistance, this.focusDistance ?? this.camDistance) - 40);
     this.camera.far = this.camDistance + 80;
     this.camera.updateProjectionMatrix();
   }
@@ -330,7 +344,7 @@ export abstract class ClayStage {
     else if (!still || cameraOnly) this.introT = Math.max(0, this.introT - dt / 1.3);
     const ie = this.introT * this.introT * (3 - 2 * this.introT);
     const az = MathUtils.degToRad(this.azimuth) + this.yaw + ie * 0.55;
-    const el = MathUtils.degToRad(this.elevation + f * 4 + ie * 10);
+    const el = MathUtils.degToRad(MathUtils.lerp(this.elevation, this.focusElevation ?? this.elevation + 4, f) + ie * 10);
     const c = this.framing.center.clone().lerp(this.focusPoint, f);
     const near = this.focusDistance ?? this.camDistance * 0.55;
     const dist = MathUtils.lerp(this.camDistance, near, f) * (1 + ie * 0.55);
@@ -339,6 +353,7 @@ export abstract class ClayStage {
     if (f > 0.001) {
       const w = this.width, h = this.height;
       if (this.focusSide === 'right') this.camera.setViewOffset(w, h, w * 0.24 * f, 0, w, h);
+      else if (this.focusSide === 'centre') this.camera.setViewOffset(w, h, 0, h * 0.08 * f, w, h);
       else this.camera.setViewOffset(w, h, 0, h * 0.26 * f, w, h);
     } else if (this.camera.view) this.camera.clearViewOffset();
 
@@ -360,7 +375,7 @@ export abstract class ClayStage {
       v.project(this.camera);
       const x = (v.x * 0.5 + 0.5) * this.width;
       const y = (-v.y * 0.5 + 0.5) * this.height;
-      out.push({ key, x: Math.round(x * 2) / 2, y: Math.round(y * 2) / 2, visible: v.z < 1 && x > -60 && x < this.width + 60 });
+      out.push({ key, x: Math.round(x * 2) / 2, y: Math.round(y * 2) / 2, visible: v.z < 1 && x > -60 && x < this.width + 60 && !node.userData.hidden });
     }
     const sig = out.map(l => `${l.x},${l.y},${l.visible}`).join(';');
     if (sig === this.lastLabels) return;

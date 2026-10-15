@@ -95,6 +95,22 @@ export const worldStyles = css`
         border-radius: 50%;
         background: var(--hh-ok);
       }
+      /* Over another card's scene: see-through, and only its buttons and panels take the pointer. */
+      ha-card.over {
+        background: transparent !important;
+        box-shadow: none !important;
+        border: none !important;
+      }
+      ha-card.over,
+      ha-card.over * {
+        pointer-events: none;
+      }
+      ha-card.over button,
+      ha-card.over .dock,
+      ha-card.over .calpop,
+      ha-card.over .calpop * {
+        pointer-events: auto;
+      }
       .tag {
         position: absolute;
         left: 0;

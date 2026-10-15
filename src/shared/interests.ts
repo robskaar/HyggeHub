@@ -1,6 +1,7 @@
-// What a person loves, from the words they use for it (English or Danish). Shared by the people card and
-// the script that bakes the family's figurines (scripts/build-people.mjs), so both read them the same.
-import type { Interest } from '../cards/energy-3d/people';
+// What a person loves, from the words they use for it (English or Danish). In the people view's town
+// each one is a little scene of its own (a Pokéball statue, a digger at work, a vegetable patch...).
+
+export type Interest = 'cooking' | 'tech' | 'gardening' | 'decor' | 'bugs' | 'pokemon' | 'nature' | 'cars';
 
 const INTEREST_WORDS: Record<Interest, RegExp> = {
   cooking: /cook|kitchen|food|bak|mad|køkken/,

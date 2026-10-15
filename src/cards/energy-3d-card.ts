@@ -1,4 +1,4 @@
-import { html, nothing, type PropertyValues } from 'lit';
+import { css, html, nothing, type PropertyValues } from 'lit';
 import { state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { registerCard, HyggeCard } from '../shared/base-card';
@@ -13,6 +13,7 @@ import { engine } from '../theme/engine';
 import type { CardConfig, HassEntity } from '../types';
 import type { EnergyCardConfig } from './energy-card';
 import type { FlowKey, IslandScene, LabelKey, LabelPosition, SceneState, Weather } from './energy-3d/scene';
+import type { TownScene } from './energy-3d/town';
 import './energy-card';
 import './alarm-card';
 import type { AlarmCardConfig } from './alarm-card';
@@ -20,6 +21,8 @@ import type { AlarmCardConfig } from './alarm-card';
 export interface Energy3dCardConfig extends CardConfig, Pick<EnergyCardConfig, 'title' | 'solar' | 'grid' | 'grid_export' | 'home' | 'extras'> {
   /** Water flow sensor (L/min, L/h or m³/h). Draws the water line from the meter. */
   water?: string;
+  /** Set by the home card when it has people: the scene can grow their town round the house. */
+  town?: boolean;
   /**
    * Without a live `grid` power sensor: meters (kWh, with long-term statistics, as on the usage card).
    * The card shows the newest hour with readings as averages, e.g. "380 W · Grid 11–12". With bought,
@@ -111,7 +114,7 @@ function litresPerMinute(e?: HassEntity): number | undefined {
 }
 
 /** Home Assistant weather state and attributes to what the scene draws. */
-function weatherFrom(e?: HassEntity): Weather {
+export function weatherFrom(e?: HassEntity): Weather {
   const w: Weather = { clouds: 0.25, gloom: 0, rain: 0, snow: 0, fog: 0, lightning: false, wind: 3 };
   if (!e) return w;
   const s = e.state;
@@ -195,7 +198,9 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
     return { solar: 'sensor.solar_power', grid: 'sensor.grid_power' };
   }
 
-  private island?: IslandScene;
+  private island?: IslandScene | TownScene;
+  /** On the home card, the people's town shows round this card's house (the people view's labels over it). */
+  @state() private townShown = false;
   private loading?: Promise<void>;
   private fallback?: HTMLElement & { setConfig(c: unknown): void; hass?: unknown };
   private failed = false;
@@ -395,6 +400,25 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
     return out;
   }
 
+  /**
+   * The house as this card's scene shows it, for the people view's town, which has the same house in its
+   * middle. Works on a card that is never shown (it reads its meters itself).
+   */
+  houseState(): SceneState {
+    const key = this.meterKey();
+    if (this.hass && key && key !== this.metersFor) {
+      this.metersFor = key;
+      void this.loadMeters();
+    }
+    return this.sceneState();
+  }
+
+  /** Resolves when the scene is up (or has given up), so a tab switch can wait for it. */
+  async whenReady() {
+    await this.updateComplete;
+    await this.init();
+  }
+
   private sceneState(): SceneState {
     const c = this.config;
     const r = this.readings();
@@ -528,8 +552,11 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
       const canvas = this.renderRoot.querySelector('canvas');
       if (!canvas) return;
       try {
-        const { IslandScene, DEFAULT_MODEL } = await import('./energy-3d/worlds');
-        const island = new IslandScene(canvas, l => this.placeLabels(l), Math.min(window.devicePixelRatio || 1, 2));
+        const { IslandScene, TownScene, DEFAULT_MODEL } = await import('./energy-3d/worlds');
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        // On the home card with people the scene can grow the town round the house (hidden until asked).
+        const island = this.config.town ? new TownScene(canvas, l => this.placeLabels(l), dpr) : new IslandScene(canvas, l => this.placeLabels(l), dpr);
+        if (island instanceof TownScene) void island.showTown(this.townShown, true);
         await island.load(this.config.model ?? DEFAULT_MODEL);
         this.island = island;
       } catch (err) {
@@ -583,6 +610,27 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
   /** The camera glides in, as when the house tab opens. */
   intro() {
     this.island?.intro();
+  }
+
+  /** The scene, for the people view to put its town and labels on (with `town: true`). */
+  townScene(): TownScene | undefined {
+    const s = this.island;
+    return s && 'reachTown' in s ? (s as TownScene) : undefined;
+  }
+
+  /**
+   * The people's town round the house, or just the house: this card's own labels and details step aside
+   * while the town shows. Resolves when the change has played.
+   */
+  async setTownShown(on: boolean, instant = false) {
+    if (on === this.townShown && !instant) return;
+    // Showing: the house's labels step aside at once. Hiding: they come back once the town has gone.
+    if (on) {
+      this.townShown = true;
+      this.closeDetail();
+    }
+    await this.townScene()?.showTown(on, instant);
+    if (!on) this.townShown = false;
   }
 
   // ---------- details ----------
@@ -792,7 +840,7 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
     const selfShare = r.home === undefined ? undefined : r.home > 0 ? Math.round(Math.max(0, Math.min(1, 1 - Math.max(r.grid, 0) / r.home)) * 100) : 100;
     const labels = this.labels();
     return html`
-      <ha-card class=${classMap({ glass: true, embedded: !!c.embedded })}>
+      <ha-card class=${classMap({ glass: true, embedded: !!c.embedded, town: this.townShown })}>
         <div class=${classMap({ stage: true, focused: !!this.detail })} style=${c.embedded ? 'height:100%' : `height:${c.height ?? 340}px`}>
           <canvas role="img" aria-label=${labels.map(l => `${l.caption} ${l.value}`).join(', ')}></canvas>
           <div class="loading" aria-hidden="true"></div>
@@ -827,7 +875,21 @@ export class HyggeEnergy3dCard extends HyggeCard<Energy3dCardConfig> {
     `;
   }
 
-  static override styles = [base, glass, worldStyles];
+  static override styles = [
+    base,
+    glass,
+    worldStyles,
+    css`
+      /* The town showing: the house's own labels and readings make way for the people view's. */
+      .town .stage > .tag,
+      .town .card-h.overlay,
+      .town .extras {
+        opacity: 0 !important;
+        pointer-events: none;
+        transition: opacity 0.3s;
+      }
+    `,
+  ];
 
 }
 

@@ -46,7 +46,7 @@ export interface PersonConfig {
    * cooking, tech, gardening, decor, bugs, pokemon, nature, cars.
    */
   interests?: string[];
-  /** A sculpted GLB of them for the 3D people view, e.g. /local/people/robert.glb. */
+  /** Their figure as a GLB for the 3D people view, e.g. /local/people/robert.glb (default: dist/people/<name>.glb). */
   model?: string;
 }
 

@@ -1,9 +1,8 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { defineConfig } from 'vite';
 
-// The family's baked figurines (npm run people) go beside the bundle as they are; the people view
-// fetches them next to itself.
-const PEOPLE = 'src/cards/energy-3d/hyggehub-people.glb.gz';
+// The family's figures (modelled in Blender, scripts/blender) go beside the bundle as they are; the people
+// view fetches them next to itself.
 const FIGURES = 'scripts/blender/out';
 
 // `npm run build` produces one self-contained ES module, dist/hyggehub.js, which Home Assistant

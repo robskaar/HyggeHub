@@ -62,9 +62,15 @@ const put = (e: HassEntity) => (states[e.entity_id] = e);
   ent('weather.forecast_home', 'partlycloudy', { temperature: 6, wind_speed: 4, wind_speed_unit: 'm/s', wind_bearing: 270, supported_features: 3 }),
   ent('light.driveway', 'off'),
   ent('alarm_control_panel.home', 'disarmed', { friendly_name: 'Alarm', code_format: 'number', code_arm_required: true, supported_features: 1 | 2 | 4 }),
-  ent('person.alex', 'home', { friendly_name: 'Alex' }),
+  ent('person.alex', location.hash.includes('#out') ? 'not_home' : 'home', { friendly_name: 'Alex' }),
+  ent('zone.home', '0', { friendly_name: 'Hjem', latitude: 54.9, longitude: 9.79, radius: 100 }),
+  ent('zone.arbejde', '0', { friendly_name: 'Arbejde', latitude: 54.92, longitude: 9.8, radius: 150 }),
+  ent('zone.vuggestue', '0', { friendly_name: 'Mælkebøtten', latitude: 54.91, longitude: 9.78, radius: 80 }),
+  ent('zone.skole', '0', { friendly_name: 'Skolen', latitude: 54.91, longitude: 9.77, radius: 120 }),
+  ent('zone.momo_mofa', '0', { friendly_name: 'Momo & Mofa', latitude: 54.95, longitude: 9.7, radius: 100 }),
+  ent('zone.fafa_bedstemor', '0', { friendly_name: 'Fafa & Bedstemor', latitude: 54.97, longitude: 9.75, radius: 100 }),
   ent('calendar.familien', 'off', { friendly_name: 'Familien' }),
-  ent('person.sam', location.hash.includes('away') ? 'Work' : 'home', { friendly_name: 'Sam' }),
+  ent('person.sam', location.hash.includes('away') ? 'Arbejde' : 'home', { friendly_name: 'Sam' }),
   ent('sensor.alex_phone_battery', '82', { unit_of_measurement: '%' }),
   ent('sensor.sam_phone_battery', '34', { unit_of_measurement: '%' }),
   ent('input_boolean.ella_asleep', 'on', { friendly_name: 'Ella asleep' }),
@@ -102,11 +108,11 @@ function familyEvents() {
     return t.toISOString();
   };
   return [
-    { summary: 'Robert: Padel', start: at(0, 19), end: at(0, 20, 30), location: 'Padelhuset, Sønderborg' },
-    { summary: 'Mette: Planteskole', start: at(1, 10), end: at(1, 11), location: 'Plantorama' },
-    { summary: 'Pelle: Fodbold', start: at(1, 16), end: at(1, 17), location: 'Stadion' },
+    { summary: 'Robert: Padel', start: at(0, 19), end: at(0, 20, 30), },
+    { summary: 'Mette: Kaffe hos Fafa & Bedstemor', start: at(1, 10), end: at(1, 11), location: 'Fafa & Bedstemor' },
+    { summary: 'Pelle: Fodbold', start: at(1, 16), end: at(1, 17), location: 'Skolen' },
     { summary: 'Hjalte: Vuggestue', start: at(1, 7, 30), end: at(1, 15), location: 'Mælkebøtten' },
-    { summary: 'Family: Middag hos mormor', start: at(2, 17), end: at(2, 20), location: 'Mormor' },
+    { summary: 'Family: Middag hos Momo & Mofa', start: at(2, 17), end: at(2, 20), location: 'Momo & Mofa' },
   ];
 }
 
@@ -336,7 +342,7 @@ if (open)
   setTimeout(() => {
     const inHome = document.querySelector('hyggehub-home-card')?.shadowRoot?.querySelectorAll('.view > * > *') ?? [];
     [...document.querySelectorAll('hyggehub-energy-3d-card'), ...inHome].forEach(card =>
-      card.shadowRoot?.querySelector<HTMLButtonElement>(open === 'weather' ? '.weather' : /^p\d+$/.test(open) ? `.fgs .cell:nth-child(${Number(open.slice(1)) + 1})` : `.tag[data-key="${open}"]`)?.click(),
+      card.shadowRoot?.querySelector<HTMLButtonElement>(open === 'weather' ? '.weather' : `.tag[data-key="${open}"]`)?.click(),
     );
   }, 3500);
 // Dev-only: #chip-2 picks the third person (or countdown) in a carousel, for screenshots.
@@ -371,3 +377,29 @@ if (location.hash.includes('#back'))
     const inHome = document.querySelector('hyggehub-home-card')?.shadowRoot?.querySelectorAll('.view > * > *') ?? [];
     [...inHome].forEach(card => card.shadowRoot?.querySelector<HTMLButtonElement>('.dock-back')?.click());
   }, 6000);
+// Dev-only: #walk sends Mette to work a few seconds in, to watch her walk there in the town.
+if (location.hash.includes('#walk')) setTimeout(() => set('person.sam', 'Arbejde'), 4500);
+// Dev-only: #freeze-1.2 stops the town's opening 1.2 s in, for screenshots of it (headless Chrome draws
+// too few frames to catch it otherwise).
+const freeze = /#freeze-([\d.]+)/.exec(location.hash)?.[1];
+if (freeze)
+  setTimeout(() => {
+    const inHome = document.querySelector('hyggehub-home-card')?.shadowRoot?.querySelectorAll('.view > * > *') ?? [];
+    for (const card of inHome) {
+      const c = card as unknown as { world?: Record<string, any>; island?: Record<string, any> };
+      const world = c.world ?? c.island;
+      if (!world || !('opening' in world)) continue;
+      world.stop();
+      world.introT = 0;
+      world.opening = Number(freeze);
+      world.walkers.forEach((w: { drop: number }) => (w.drop = 0));
+      for (let k = 0; k < 3; k++) world.renderOnce();
+    }
+  }, 7000);
+// Dev-only: #to-house / #to-people taps that tab a few seconds in, to try the switches between them.
+const toTab = /#to-(house|people)/.exec(location.hash)?.[1];
+if (toTab)
+  setTimeout(() => {
+    const tabs = document.querySelector('hyggehub-home-card')?.shadowRoot?.querySelectorAll<HTMLButtonElement>('.tabs button') ?? [];
+    [...tabs].find(b => b.textContent?.includes(toTab === 'house' ? 'Hus' : 'Personer'))?.click();
+  }, 5000);
